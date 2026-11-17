@@ -637,6 +637,9 @@ fn main() -> io::Result<()> {
         println!("       herdr check <subcommand> ...");
         println!("       herdr onboard <subcommand> ...");
         println!("       herdr task <subcommand> ...");
+        println!("       herdr team <subcommand> ...");
+        println!("       herdr relay sync <options>");
+        println!("       herdr read <options>");
         println!("       herdr workspace <subcommand> ...");
         println!("       herdr worktree <subcommand> ...");
         println!("       herdr tab <subcommand> ...");
@@ -694,6 +697,18 @@ fn main() -> io::Result<()> {
             (
                 "herdr task <subcommand>",
                 "Create and inspect local team tasks",
+            ),
+            (
+                "herdr team <subcommand>",
+                "Create teams and manage signed teammate invitations",
+            ),
+            (
+                "herdr relay sync <options>",
+                "Synchronize signed team events over HTTPS",
+            ),
+            (
+                "herdr read <options>",
+                "Ask a local approved repository using a separate Codex read-only session",
             ),
             ("herdr machine <subcommand>", "Manage saved SSH machines"),
             (

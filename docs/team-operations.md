@@ -103,5 +103,9 @@ deliberate clean build is required.
   build; the status is surfaced and normal checks are confirmation-gated.
 - mDNS physical discovery still needs verification on two devices and may be
   blocked by managed Wi-Fi client isolation.
-- Automatic reconnect/scheduling, a central relay, repository synchronization,
-  automatic code changes, and `/read` are outside the current MVP.
+- An optional Cloudflare relay supports Internet event synchronization in the
+  prototype; deployment and physical cross-network testing remain manual. Run
+  `herdr relay sync` to fetch events because automatic reconnect is not yet a
+  background worker. Repository synchronization and automatic code changes are
+  outside scope. Local `/read` uses the installed Codex CLI's explicit
+  `--sandbox read-only` mode; Herdr does not add a separate OS boundary.

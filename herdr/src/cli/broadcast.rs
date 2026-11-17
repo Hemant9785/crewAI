@@ -101,6 +101,11 @@ pub(crate) fn run_broadcast_command(args: &[String]) -> std::io::Result<i32> {
 
             let mut store = TeamStore::open(&database).map_err(storage_error)?;
             store.insert_event(&event, at).map_err(storage_error)?;
+            match super::relay::auto_sync_after_write(store.path(), &event.team_id) {
+                Ok(true) => {}
+                Ok(false) => eprintln!("broadcast saved locally; set HERDR_RELAY_URL and HERDR_RELAY_TOKEN to deliver it over the Internet"),
+                Err(error) => eprintln!("broadcast saved locally but relay delivery failed: {error}; retry with `herdr relay sync`"),
+            }
             let broadcast = store
                 .broadcast(&message_id)
                 .map_err(storage_error)?

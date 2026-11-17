@@ -4,7 +4,7 @@ This document is the source of truth for the product boundary and architecture. 
 
 ## Product goal
 
-Build a terminal-first application that lets a small team coordinate with each other's local coding agents and repositories without a central application server. The initial deployment target is teammates on the same office network.
+Build a terminal-first application that lets a small team coordinate with each other's local coding agents and repositories. LAN peer connections remain supported. Internet mode uses an optional Cloudflare relay so devices behind separate home or office routers can exchange team records without exposing their laptops to inbound internet connections.
 
 The application synchronizes team records only. Repository files remain on the repository owner's laptop.
 
@@ -20,23 +20,26 @@ The first usable version supports:
 - Tasks, task status updates, follow-ups, broadcasts, and activity history.
 - Offline records and queued requests that synchronize after reconnection.
 - Direct peer-to-peer connections on the local network.
+- Internet synchronization through a deployed Cloudflare Worker and per-team Durable Object relay.
 - Permission-aware access to repository questions.
 
-The first version does not include a central relay, cloud storage, repository synchronization, automatic code changes, multi-device identity, or permission delegation unless a later decision explicitly adds them.
+The relay stores only bounded, signed team events and delivery metadata. It never stores or synchronizes repository files, repository contents, private keys, or unbounded command output. The relay is a transport mailbox; each laptop keeps its own SQLite database and verifies event signatures, membership, permissions, revocation, and replay rules before applying events. HTTPS protects traffic to the relay. The relay operator can read team event payloads, so users must not put secrets or repository contents in tasks, broadcasts, or requests.
+
+The first version does not include repository synchronization, automatic code changes, multi-device identity, or permission delegation unless a later decision explicitly adds them.
 
 ## Commands
 
 ### `/task @person <description>`
 
-Creates a task for a teammate. The task has a stable ID and a state machine:
+Creates a task for a teammate. The current prototype CLI form is `herdr /task create` with explicit `--db`, `--team`, `--actor`, `--identity`, `--assignee`, and `--description` options. The task has a stable ID and a state machine:
 
 `queued -> delivered -> in_progress -> done`
 
 It may also enter `cancelled`, `failed`, or `needs_attention`. The recipient can send a follow-up. The sender and authorized leads can view task history; status changes must be recorded as events.
 
-### `/broadcast <message>`
+### `/broadcast <message>` (also accepts the legacy spelling `/brodcast`)
 
-Creates a team or group message. Broadcasts are delivered to online peers and remain in the sender's outbox until acknowledged or permanently failed. A broadcast is not a permission grant.
+Creates a team or group message. The current prototype CLI form is `herdr /brodcast create` (also `herdr /broadcast create`) with explicit team and identity options. A broadcast is a signed event synchronized through LAN or the Internet relay; it is not a permission grant.
 
 ### `/check @person <question>`
 
@@ -44,9 +47,9 @@ Requests a repository question from a teammate's approved local repository. The 
 
 This command is only considered read-only if the execution boundary prevents writes. A prompt saying “do not edit files” is not sufficient enforcement.
 
-### `/read @person <prompt> <source link>`
+### `/read <question>`
 
-This is a later feature, not part of the first acceptance milestone. It combines external source retrieval with local repository context and therefore needs explicit network, content-size, prompt-injection, and read-only execution controls before implementation.
+Starts a separate Codex session on the current terminal to answer a query about this device's approved local repository. It does not send repository content or the query through the team relay and does not attach to the user's active Codex session. The process must use Codex's read-only sandbox mode; if that boundary cannot start, the command must fail closed rather than launch an unrestricted process.
 
 ## Identity and trust
 
@@ -124,7 +127,7 @@ The peer protocol must define:
 - Replay protection and duplicate handling.
 - Revocation propagation.
 
-The initial transport may use TCP or another suitable local transport. The implementation must hide the transport behind an interface so discovery and transport can change independently.
+LAN mode may use authenticated TCP. Internet mode connects outbound over HTTPS to a Cloudflare Worker and routes bounded events through a Durable Object scoped to one team. The transport interface keeps LAN and relay transports replaceable. The relay validates protocol shape, size, team scope, event signatures, duplicate IDs, and conflicting IDs; clients still perform authoritative membership, revocation, permission, and projection checks before applying events. Relayed records are retained for offline teammates and bounded by per-team event count and bytes; the current prototype does not expire or compact mailbox history. Each client persists its own paging cursor after verified application and retains its authoritative local history.
 
 The offline queue must expose these states:
 
@@ -176,7 +179,7 @@ flowchart LR
   UI[Herdr UI and commands] --> Domain[Domain commands and authorization]
   Domain --> Store[SQLite event log and projections]
   Store --> Sync[Sync protocol and outbox]
-  Sync --> Peer[Encrypted peer connection]
+  Sync --> Peer[LAN peer or HTTPS relay]
   Domain --> Runner[Isolated Codex runner]
   Runner --> Repo[Owner-approved local repository]
 ```

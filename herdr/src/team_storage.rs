@@ -19,7 +19,7 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 5;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 6;
 pub(crate) const MAX_OUTBOX_ATTEMPTS: u32 = 5;
 
 const MIGRATION_1: &str = r#"
@@ -172,6 +172,14 @@ CREATE INDEX IF NOT EXISTS task_activity_task_created
 
 const MIGRATION_5: &str = r#"
 ALTER TABLE requests ADD COLUMN result_json TEXT;
+"#;
+
+const MIGRATION_6: &str = r#"
+CREATE TABLE relay_cursors (
+    team_id TEXT PRIMARY KEY,
+    sequence INTEGER NOT NULL CHECK (sequence >= 0),
+    updated_at INTEGER NOT NULL
+);
 "#;
 
 #[derive(Debug)]
@@ -426,6 +434,22 @@ impl TeamStore {
         Ok(())
     }
 
+    pub(crate) fn team(&self, team_id: &str) -> Result<Option<Team>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT team_id, name, authority_member_id, created_at FROM teams WHERE team_id = ?1",
+                params![team_id],
+                |row| Ok(Team {
+                    team_id: row.get(0)?,
+                    name: row.get(1)?,
+                    authority_member_id: row.get(2)?,
+                    created_at: row.get(3)?,
+                }),
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
     pub(crate) fn save_invitation(
         &self,
         invitation: &TeamInvitation,
@@ -490,6 +514,29 @@ impl TeamStore {
             ],
         )?;
         Ok(())
+    }
+
+    pub(crate) fn validate_approval_invitation(
+        &self,
+        invitation_id: &str,
+        team_id: &str,
+        requested_at: u64,
+        now: u64,
+    ) -> Result<bool, StorageError> {
+        let record = self.connection.query_row(
+            "SELECT team_id, created_at, expires_at, revoked FROM team_invitations WHERE invitation_id = ?1",
+            params![invitation_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?, row.get::<_, u64>(2)?, row.get::<_, i64>(3)?)),
+        ).optional()?;
+        Ok(
+            record.is_some_and(|(stored_team, created, expires, revoked)| {
+                stored_team == team_id
+                    && revoked == 0
+                    && requested_at >= created
+                    && requested_at <= now
+                    && requested_at < expires
+            }),
+        )
     }
 
     pub(crate) fn accept_invitation(
@@ -698,7 +745,7 @@ impl TeamStore {
         Ok(evaluator.check(subject_member_id, resource, action, now))
     }
 
-    fn team_authority(&self, team_id: &str) -> Result<String, StorageError> {
+    pub(crate) fn team_authority(&self, team_id: &str) -> Result<String, StorageError> {
         self.connection
             .query_row(
                 "SELECT authority_member_id FROM teams WHERE team_id = ?1",
@@ -986,6 +1033,81 @@ impl TeamStore {
             })
             .collect::<Result<Vec<_>, _>>()?;
         Ok(events)
+    }
+
+    pub(crate) fn team_events(
+        &self,
+        team_id: &str,
+        limit: usize,
+    ) -> Result<Vec<Event>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT event_id, team_id, actor_member_id, device_id, event_type,
+                    payload_json, schema_version, logical_time, signature
+             FROM event_log WHERE team_id = ?1 ORDER BY logical_time, event_id LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![team_id, limit as u64], |row| {
+            let event_type: String = row.get(4)?;
+            let event_type = EventType::from_str(&event_type).ok_or_else(|| {
+                rusqlite::Error::InvalidColumnType(
+                    4,
+                    "event_type".into(),
+                    rusqlite::types::Type::Text,
+                )
+            })?;
+            let payload_json: String = row.get(5)?;
+            Ok(Event {
+                event_id: row.get(0)?,
+                team_id: row.get(1)?,
+                actor_member_id: row.get(2)?,
+                device_id: row.get(3)?,
+                event_type,
+                payload: serde_json::from_str(&payload_json).map_err(to_sql_error)?,
+                schema_version: row.get(6)?,
+                logical_time: row.get(7)?,
+                signature: row.get(8)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    pub(crate) fn device_public_key(
+        &self,
+        device_id: &str,
+    ) -> Result<Option<String>, StorageError> {
+        self.connection
+            .query_row(
+                "SELECT public_key FROM devices WHERE device_id = ?1 AND active = 1",
+                params![device_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map_err(StorageError::from)
+    }
+
+    pub(crate) fn relay_cursor(&self, team_id: &str) -> Result<u64, StorageError> {
+        Ok(self
+            .connection
+            .query_row(
+                "SELECT sequence FROM relay_cursors WHERE team_id = ?1",
+                params![team_id],
+                |row| row.get(0),
+            )
+            .optional()?
+            .unwrap_or(0))
+    }
+
+    pub(crate) fn save_relay_cursor(
+        &self,
+        team_id: &str,
+        sequence: u64,
+        updated_at: u64,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT INTO relay_cursors (team_id, sequence, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(team_id) DO UPDATE SET sequence = MAX(sequence, excluded.sequence), updated_at = excluded.updated_at",
+            params![team_id, sequence, updated_at],
+        )?;
+        Ok(())
     }
 
     pub(crate) fn event_count(&self) -> Result<u64, StorageError> {
@@ -1383,6 +1505,9 @@ impl TeamStore {
         }
         if starting_version < 5 {
             transaction.execute_batch(MIGRATION_5)?;
+        }
+        if starting_version < 6 {
+            transaction.execute_batch(MIGRATION_6)?;
         }
         transaction.execute(
             "INSERT INTO schema_version(version)
@@ -1849,6 +1974,21 @@ mod tests {
             "team-assistant-{label}-{}-{nanos}.sqlite",
             std::process::id()
         ))
+    }
+
+    #[test]
+    fn relay_cursor_is_persistent_and_never_moves_backwards() {
+        let path = db_path("relay-cursor");
+        {
+            let store = TeamStore::open(&path).unwrap();
+            assert_eq!(store.relay_cursor("team-1").unwrap(), 0);
+            store.save_relay_cursor("team-1", 12, 100).unwrap();
+            store.save_relay_cursor("team-1", 7, 101).unwrap();
+            assert_eq!(store.relay_cursor("team-1").unwrap(), 12);
+        }
+        let reopened = TeamStore::open(&path).unwrap();
+        assert_eq!(reopened.relay_cursor("team-1").unwrap(), 12);
+        let _ = fs::remove_file(path);
     }
 
     fn identity_path(label: &str) -> PathBuf {

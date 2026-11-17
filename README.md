@@ -4,9 +4,10 @@ crewAI is a terminal-first team coding assistant built on top of Herdr. It
 combines local team coordination, signed task and broadcast records,
 permission-aware repository requests, and bounded agent execution.
 
-> Status: this repository contains a runnable developer MVP. The complete
-> two-device onboarding flow, automatic reconnect workers, and an enforced
-> Windows read-only execution sandbox are not yet production-ready.
+> Status: this repository contains a runnable Internet collaboration prototype. A local two-profile relay walkthrough passes; Cloudflare deployment and a physical two-laptop Internet run have not yet been performed. Relay sync is currently started manually.
+
+For the team setup, invitation, relay deployment, `/task`, `/brodcast`, and
+`/read` walkthrough, see [Internet team prototype](docs/internet-team.md).
 
 ## Prerequisites
 
@@ -101,15 +102,35 @@ $env:HERDR_TEAM_DB = 'E:\crewAI-data\manager\manager.sqlite'
 The supported roles are `manager`, `group-head`, `part-head`, and
 `implementer`.
 
-## Current team-product limitation
+## Implemented prototype
 
-The current MVP does not yet expose a complete user-facing team
-create/invite/join workflow. The domain and storage layers include membership
-and invitation primitives, but the command/UI layer for creating a team and
-adding other devices is still future work. See
-[`docs/mvp-walkthrough.md`](docs/mvp-walkthrough.md) and
-[`docs/team-operations.md`](docs/team-operations.md) for the exact guarantees
-and limitations.
+- Create a team, issue an invitation, join from another laptop, and approve
+  the signed join request.
+- Send signed `/task` assignments and `/brodcast` (or `/broadcast`) messages
+  through LAN sync or the optional Cloudflare relay.
+- Run `/read` locally to ask a separate Codex CLI session about this device's
+  approved repository. The query and repository context do not pass through
+  the team relay.
+- Keep repository files, SQLite data, and private keys on their owning device.
+  The relay stores bounded team events and delivery metadata.
+- Run `herdr relay sync` on the receiving laptop to fetch new events.
+
+See [the Internet team walkthrough](docs/internet-team.md) for deployment,
+setup, invitation, and command examples.
+
+## Pending work and known limits
+
+- The Worker has not been deployed to a Cloudflare account, and a physical
+  two-laptop Internet run has not been verified. Local two-profile testing
+  against `wrangler dev` is documented.
+- Relay downloads currently require a manual `herdr relay sync`; there is no
+  background reconnect worker.
+- The prototype has no CLI for member revocation or relay-token rotation.
+- The relay is not end-to-end encrypted; its operator can read event payloads.
+  Keep secrets, repository contents, and local paths out of team messages.
+- `/check` on Windows still requires `--confirm-unisolated`; Herdr cannot
+  enforce an OS-level read-only boundary for that command. `/read` depends on
+  the installed Codex CLI's `--sandbox read-only` behavior.
 
 ## Repository layout
 
@@ -119,6 +140,10 @@ and limitations.
 - `herdr/` — application source and vendored terminal dependencies
 - `docs/` — operations, networking, and MVP walkthrough documentation
 - `tools/build-herdr.ps1` — E:-drive build and test wrapper for Windows
+
+The `relay/` directory contains the Cloudflare Worker and per-team Durable
+Object. The Internet setup and command walkthrough is in
+[`docs/internet-team.md`](docs/internet-team.md).
 
 ## Data and security notes
 

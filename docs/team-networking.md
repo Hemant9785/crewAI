@@ -17,3 +17,6 @@ authorization.
 The automated tests verify signed advertisement construction, tamper
 rejection, and manual address parsing. They do not claim a physical LAN or
 firewall test because that requires two running devices on the same network.
+
+For teammates on different networks, configure the optional Cloudflare relay
+and run `herdr relay sync`; see [internet team prototype](internet-team.md).

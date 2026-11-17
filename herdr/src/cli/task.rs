@@ -153,6 +153,11 @@ pub(crate) fn run_task_command(args: &[String]) -> std::io::Result<i32> {
 
             let mut store = TeamStore::open(database).map_err(storage_error)?;
             store.insert_event(&event, at).map_err(storage_error)?;
+            match super::relay::auto_sync_after_write(store.path(), &team_id) {
+                Ok(true) => {}
+                Ok(false) => eprintln!("task saved locally; set HERDR_RELAY_URL and HERDR_RELAY_TOKEN to deliver it over the Internet"),
+                Err(error) => eprintln!("task saved locally but relay delivery failed: {error}; retry with `herdr relay sync`"),
+            }
             let task_id = task_id
                 .or(generated_task_id)
                 .ok_or_else(|| std::io::Error::other("task event did not contain a task ID"))?;

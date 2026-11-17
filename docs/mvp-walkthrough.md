@@ -105,16 +105,17 @@ herdr check run --db E:\team\implementer.sqlite --team TEAM_ID `
 
 The following are not claimed as completed physical product acceptance:
 
-- The current CLI does not yet expose a complete team-create/invite/join and
-  grant/revoke orchestration command; those flows are covered by domain and
-  storage tests and need a thin command layer for a non-developer walkthrough.
-- Automatic peer reconnect/scheduling is not a background worker. The sync
-  boundary must be driven by the integration that owns the peer connection.
+- Internet team creation, signed invitations, join requests, authority approval,
+  and task/broadcast delivery now have CLI commands; see
+  [internet team prototype](internet-team.md) for the current flow.
+- Automatic peer or relay reconnect/scheduling is not a background worker. Run
+  `herdr relay sync` on the receiving device to fetch Internet events.
 - Two-device mDNS discovery and firewall behavior require two laptops on the
   same LAN; automated tests only cover signed advertisement parsing and
   tamper rejection.
-- The Windows build has no verified read-only filesystem/network sandbox, so
-  `/check` is confirmation-gated and must not be marketed as safely read-only.
+- `/check` keeps its existing Windows isolation limitation and must not be
+  marketed as safely read-only. Local `/read` invokes Codex with its explicit
+  `--sandbox read-only` mode; the installed Codex CLI supplies that sandbox.
 
 These limits mean the repository contains a real runnable local/team product
 with durable state, authenticated protocol primitives, UI inspection, queued

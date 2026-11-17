@@ -155,6 +155,16 @@ impl DeviceIdentity {
         &self.device_id
     }
 
+    pub(crate) fn device_id_for_public_key(public_key: &str) -> Result<String, IdentityError> {
+        let bytes: [u8; 32] = STANDARD
+            .decode(public_key)?
+            .try_into()
+            .map_err(|_| IdentityError::InvalidKey("public key must contain 32 bytes"))?;
+        VerifyingKey::from_bytes(&bytes)
+            .map_err(|_| IdentityError::InvalidKey("public key is not a valid Ed25519 key"))?;
+        Ok(device_id_for(&bytes))
+    }
+
     pub(crate) fn public_key(&self) -> String {
         STANDARD.encode(self.public_key)
     }

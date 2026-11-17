@@ -33,6 +33,8 @@ mod permission;
 pub(crate) mod plugin;
 pub(crate) mod projection;
 mod protocol_guard;
+mod read;
+mod relay;
 mod server;
 mod server_not_running;
 mod spec;
@@ -40,6 +42,7 @@ mod status;
 pub(crate) mod tab;
 mod target;
 mod task;
+mod team;
 mod title;
 mod workspace;
 pub(crate) mod workspace_bindings;
@@ -130,10 +133,13 @@ pub fn maybe_run(args: &[String]) -> std::io::Result<CommandOutcome> {
         "channel" => run_channel_command(&args[2..])?,
         "machine" => machine::run_machine_command(&args[2..])?,
         "permission" => permission::run_permission_command(&args[2..])?,
-        "broadcast" => broadcast::run_broadcast_command(&args[2..])?,
+        "relay" => relay::run_relay_command(&args[2..])?,
+        "broadcast" | "/broadcast" | "/brodcast" => broadcast::run_broadcast_command(&args[2..])?,
+        "read" | "/read" => read::run_read_command(&args[2..])?,
         "check" => check::run_check_command(&args[2..])?,
         "onboard" => onboard::run_onboard_command(&args[2..])?,
-        "task" => task::run_task_command(&args[2..])?,
+        "task" | "/task" => task::run_task_command(&args[2..])?,
+        "team" => team::run_team_command(&args[2..])?,
         "workspace" => workspace::run_workspace_command(&args[2..])?,
         "worktree" => worktree::run_worktree_command(&args[2..])?,
         "tab" => tab::run_tab_command(&args[2..])?,

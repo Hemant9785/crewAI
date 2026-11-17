@@ -3,6 +3,9 @@
 .tools/
 herdr/target/
 herdr/vendor/libghostty-vt/zig-pkg/
+relay/node_modules/
+relay/.wrangler/
+relay/.dev.vars
 
 # Local runtime state and credentials
 *.sqlite

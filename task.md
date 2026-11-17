@@ -198,7 +198,7 @@ Use this file as the ordered implementation checklist. Read `idea.md`, `spec.md`
 
 ## Current status
 
-Updated status (2026-11-12): All numbered tasks 0.1-7.1 are checked off with completion notes. The project is a runnable local/team product, with the physical two-laptop walkthrough, automatic reconnect workers, and enforced Windows read-only sandbox explicitly documented as remaining limitations. The historical status sentence below is retained for provenance.
+Updated status (2026-11-17): Tasks 0.1-7.1 and prototype tasks 8.1-8.4 are checked off with completion notes. Local two-profile relay collaboration is verified; Cloudflare deployment, physical cross-network verification, background reconnect, and member-revocation/token-rotation commands remain limitations. The historical status sentence below is retained for provenance.
 
 Planning documents have been reviewed and strengthened. Phase 0, tasks 1.1–1.3, 2.1–2.4, and 3.1–3.3 are complete; task 3.4 is the next active task.
 
@@ -217,3 +217,36 @@ The following 0.2 entries are historical failed attempts and are superseded by t
 - **0.1 completed:** Herdr was imported into `herdr/` from the documented source `https://github.com/herdrdev/herdr.git` at commit `ee5bfb5041bb3e4a49d591c72308aae3c81ecdde` (2026-10-29). Herdr is Apache-2.0 licensed. Its documented native build is Rust `1.96.1` with Cargo, using `cargo build --release --locked` (the Windows `just build` recipe additionally packages the ConPTY runtime). The binary entry point is `herdr/src/main.rs`; it dispatches to `server::headless::run_server()` or `client::run_client()`. Relevant integration surfaces are `herdr/src/server/`, `herdr/src/client/`, and `herdr/src/ui/`. Herdr's own `AGENTS.md` and `CONTRIBUTING.md` were read. The planning files remain at the workspace root and were not overwritten.
 - **Historical 0.2 provisioning attempt (2026-11-11; superseded):** Visual Studio 2019 Build Tools was present, but Rust provisioning was interrupted before completion. No source files were changed.
 - **Historical 0.2 replacement attempt (2026-11-11; superseded):** Rust installation succeeded, but the first unmodified build lacked Zig 0.16.0. Zig was subsequently installed and the unmodified build and launch were verified as recorded above.
+
+## Phase 8 — Internet team workflow
+
+The user explicitly changed the product boundary from LAN-only and selected Cloudflare Workers as the relay target. The existing LAN transport remains supported. The Cloudflare relay may store bounded signed team events and delivery metadata, but must never receive repository files, repository contents, private keys, or unbounded command output. Each client remains authoritative for membership, revocation, permission checks, signatures, replay protection, and local projections.
+
+- [x] **8.1 Build and verify the Cloudflare relay.**
+  - Add a Worker with one Durable Object per team and a versioned HTTPS API for bounded event upload and paging; clients persist their applied page cursor as the acknowledgement.
+  - Validate team IDs, event schema, actor/device signature, event size, duplicate IDs, conflicts, and retention quotas before storing an event.
+  - Never log event payloads, keys, or repository paths. Store only signed team events and delivery metadata.
+  - Add negative tests for malformed, oversized, unsigned, invalid-signature, duplicate, conflicting, and wrong-team input.
+  - **Complete when:** local Worker tests demonstrate bounded storage, safe paging, and rejection behavior; deployment instructions are documented.
+  - **Completion note (2026-11-17):** Added `relay/`, a versioned HTTPS Worker API backed by one SQLite Durable Object per team. Uploads validate bounded event envelopes, Ed25519 signatures, team/device identity, bootstrap authority, duplicate/conflicting IDs, and mailbox quotas. Added authority-signed relay-token rotation, bounded paging, negative tests, and local deployment/privacy/capacity instructions in `relay/README.md`. Verification: `npm test` (5 passed), `npm run typecheck`, and `npx wrangler deploy --dry-run` passed. Known limitations: no Cloudflare account deployment or physical second-device Internet test has been performed; mailbox history has hard 20,000-event/64-MiB caps and no expiry/compaction yet.
+
+- [x] **8.2 Add Rust relay sync and team setup.**
+  - Add a replaceable HTTPS relay client, local relay configuration, bounded paging, retry/backoff, and persistent cursors.
+  - Add usable create/invite/join/approve flows that preserve explicit identity, membership, pairing, and permission checks.
+  - Keep peer-synced events in each laptop's own SQLite database and re-verify them before projection.
+  - **Complete when:** two independent local profiles synchronize signed team events through the local Worker after reconnect, including duplicate, revoked-member, and invalid-signature cases.
+  - **Completion note (2026-11-17):** Added the bounded Rust HTTPS client (`ureq`), 15-second requests with short transient retry/backoff, team-scoped uploads, bounded relay pages, durable per-team cursors in SQLite migration 6, and signed create/invite/join/approve CLI flows. Added auto-sync after task/broadcast creation when `HERDR_RELAY_URL` and `HERDR_RELAY_TOKEN` are present. Manual local walkthrough with two separate SQLite profiles and identities against `wrangler dev` passed: invite, signed join request, authority approval, task projection, and broadcast projection. Verification: project check/build passed; cursor persistence and `/read` authorization tests passed; the two-profile walkthrough passed; Worker tests/typecheck passed. Known limitations: receiver runs `herdr relay sync` manually; Cloudflare deployment and a physical cross-network run remain outstanding; the prototype has no member-removal/token-rotation CLI.
+
+- [x] **8.3 Connect task and broadcast commands; add local `/read`.**
+  - Make `/task @person <description>` queue and synchronize a task to the selected teammate.
+  - Make `/broadcast <message>` and `/brodcast <message>` queue and synchronize a team message.
+  - Make `/read <question>` start a separate Codex session on this device against its approved local repository, with Codex read-only sandbox mode and bounded runtime/output. Fail closed if the sandbox cannot start; never send the query or repository content through the relay.
+  - **Complete when:** CLI workflow tests prove remote task/broadcast projections and the local Codex runner behavior, including safe failure and no repository-content sync.
+  - **Completion note (2026-11-17):** Added `/task` and `/brodcast` CLI aliases that create signed events and attempt relay delivery, plus `/broadcast`. Added `/read`, which checks local repository approval and starts a separate `codex.exe exec --sandbox read-only --ephemeral` child with a five-minute timeout and 64-KiB output cap. The query and repository context do not enter the relay path. Verification: two-profile local walkthrough confirmed remote task and broadcast projections; `read_refuses_unapproved_repository` passed; the installed Codex CLI advertises `--sandbox read-only`. Known limitation: actual Codex model invocation was not run in this walkthrough; Codex CLI owns sandbox enforcement.
+
+- [x] **8.4 Document and verify the internet walkthrough.**
+  - Document first deployment, relay URL configuration, invitation sharing, teammate startup/reconnect, and the three commands.
+  - Run focused Rust tests, Worker tests, format/type/build checks, and a local two-profile end-to-end walkthrough.
+  - Record that Cloudflare account deployment and physical two-device internet verification require the user's account and a second device.
+  - **Complete when:** the walkthrough is reproducible from a clean clone and reports deployment and hardware limits accurately.
+  - **Completion note (2026-11-17):** Added `docs/internet-team.md`, updated the repository README and planning/operations docs, and documented clean-clone deployment, invitation transfer, local setup, the three commands, manual reconnect, relay privacy/capacity, and deployment/hardware limits. Verification: `npm test` (5 passed), `npm run typecheck`, `npx wrangler deploy --dry-run`, `.\tools\build-herdr.ps1 -Mode fmt-check`, focused relay cursor and read-authorization tests, and a successful local two-profile walkthrough. Full Rust suite: 3,460 passed, 61 failed, 12 ignored; failures were in unrelated existing Windows/worktree/config/detection tests. Known limitations: no Cloudflare account deployment, no physical Internet test, no background reconnect, and no automated member revocation/token rotation.
