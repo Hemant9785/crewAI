@@ -4,7 +4,7 @@ crewAI is a terminal-first team coding assistant built on top of Herdr. It
 combines local team coordination, signed task and broadcast records,
 permission-aware repository requests, and bounded agent execution.
 
-> Status: this repository contains a runnable Internet collaboration prototype. A local two-profile relay walkthrough passes; Cloudflare deployment and a physical two-laptop Internet run have not yet been performed. Relay sync is currently started manually.
+> Status: this repository contains a runnable Internet collaboration prototype. The Cloudflare relay is deployed and its health endpoint responds; a physical two-laptop Internet run has not yet been performed. Relay sync is currently started manually.
 
 For the team setup, invitation, relay deployment, `/task`, `/brodcast`, and
 `/read` walkthrough, see [Internet team prototype](docs/internet-team.md).
@@ -120,9 +120,8 @@ setup, invitation, and command examples.
 
 ## Pending work and known limits
 
-- The Worker has not been deployed to a Cloudflare account, and a physical
-  two-laptop Internet run has not been verified. Local two-profile testing
-  against `wrangler dev` is documented.
+- A physical two-laptop Internet run has not been verified. Local two-profile
+  testing against `wrangler dev` is documented.
 - Relay downloads currently require a manual `herdr relay sync`; there is no
   background reconnect worker.
 - The prototype has no CLI for member revocation or relay-token rotation.

@@ -14,7 +14,7 @@ npx wrangler login
 npm run deploy
 ```
 
-Keep the HTTPS Worker URL. For local development, run `npm run dev -- --ip 127.0.0.1 --port 8787`; localhost HTTP is accepted by Herdr only for this development case.
+The deployed Worker URL for this project is `https://team-ai-relay.spicygames-hemant9785.workers.dev`. For local development, run `npm run dev -- --ip 127.0.0.1 --port 8787`; localhost HTTP is accepted by Herdr only for this development case.
 
 The relay holds signed event payloads in Cloudflare Durable Object SQLite storage. The current per-team limits are 20,000 events and 64 MiB; there is no expiry or compaction yet. The relay operator can read event payloads. Do not put secrets, repository contents, patches, or local paths in team messages. A team uses one shared bearer token, so send invitation files privately and keep them out of Git.
 
@@ -38,7 +38,7 @@ $random = New-Object System.Security.Cryptography.RNGCryptoServiceProvider
 $bytes = New-Object byte[] 32
 $random.GetBytes($bytes)
 $env:HERDR_RELAY_TOKEN = [Convert]::ToBase64String($bytes).TrimEnd('=').Replace('+','-').Replace('/','_')
-$env:HERDR_RELAY_URL = 'https://YOUR-WORKER.workers.dev'
+$env:HERDR_RELAY_URL = 'https://team-ai-relay.spicygames-hemant9785.workers.dev'
 ```
 
 Create the team, then create an invitation file:
@@ -100,4 +100,4 @@ Herdr starts a separate `codex.exe exec --sandbox read-only --ephemeral` process
 
 The local two-profile walkthrough passed against `wrangler dev`: team creation, signed invitation, join request, authority approval, relay sync, remote task projection, and remote broadcast projection. The Rust cursor and `/read` authorization tests pass, and the relay Worker tests, TypeScript type check, and Wrangler deployment dry run pass.
 
-No Cloudflare account deployment or physical second-laptop Internet run has been performed. Until a background reconnect service is added, run `herdr relay sync` on the receiving device to pull events. The shared bearer token must be rotated out-of-band if a teammate loses access; automated token rotation and membership revocation commands are not part of this prototype.
+The Worker is deployed to the project owner's Cloudflare account, and `GET /healthz` returned HTTP 200 with `{"status":"ok","protocol_version":1}`. A physical second-laptop Internet run has not been performed. Until a background reconnect service is added, run `herdr relay sync` on the receiving device to pull events. The shared bearer token must be rotated out-of-band if a teammate loses access; automated token rotation and membership revocation commands are not part of this prototype.
