@@ -69,14 +69,42 @@ $env:HERDR_CONFIG_PATH = 'E:\crewAI-data\config.toml'
 & '.\herdr\target\debug\herdr.exe'
 ```
 
-The application opens the existing Herdr terminal workspace. Open the
-top-right global menu and choose **team dashboard** to view the team overlay.
-The dashboard has four sections: teammates, tasks, broadcasts, and requests.
+The application opens the Herdr terminal workspace. Open the top-right global
+menu and choose **team dashboard**. The dashboard has four sections: teammates,
+tasks, broadcasts, and requests. Once Herdr is open, use the dashboard to set up
+your profile, create a team, invite or approve teammates, assign tasks, send
+broadcasts, ask local Codex questions, and sync. You do not need a separate
+PowerShell window for those team actions.
 
-## Initialize a local profile
+Dashboard shortcuts:
 
-Onboarding stores a local display name, role label, protected device identity,
-and approved repository path. It does not copy repository contents.
+| Key | Action |
+| --- | --- |
+| `p` | Set up this device's profile and approved repository |
+| `c` | Create the team |
+| `i` | Create a signed invite code; press `y` to copy it |
+| `n` | Paste an invite code, or reconnect with it after restart |
+| `a` | Paste and approve a teammate's signed join request code |
+| `t` | Assign a task to a member ID |
+| `b` | Broadcast a team message |
+| `r` | Ask Codex about this device's approved local repository |
+| `s` | Sync the team through the Internet relay |
+| `y` | Copy the current invite or join-request code |
+
+For a first teammate: press `i`, then `y` to copy the invite code. Send it
+privately to them. They set up their device with `p`, press `n`, and paste the
+code. They press `y` to copy their signed join request and send it privately
+back to you. Press `a` and paste that request to approve the new member. Invite
+codes include the team's relay credential, so never commit or post one publicly.
+Herdr keeps the credential in memory for the current session; after a restart,
+the teammate can paste the same valid invite again to reconnect.
+
+## Initialize a local profile from the UI
+
+Press `p` in the Team Dashboard and enter a member ID, display name, role,
+repository ID, and local repository folder. This creates the local profile,
+device identity, and repository approval without copying repository contents.
+The CLI form below remains available for scripted setup.
 
 ```powershell
 $data = 'E:\crewAI-data\manager'
@@ -105,7 +133,7 @@ The supported roles are `manager`, `group-head`, `part-head`, and
 ## Implemented prototype
 
 - Create a team, issue an invitation, join from another laptop, and approve
-  the signed join request.
+  the signed join request code.
 - Send signed `/task` assignments and `/brodcast` (or `/broadcast`) messages
   through LAN sync or the optional Cloudflare relay.
 - Run `/read` locally to ask a separate Codex CLI session about this device's
@@ -148,8 +176,9 @@ Object. The Internet setup and command walkthrough is in
 
 - Team records, identities, and databases should stay on the device that owns
   them; never commit identity files, databases, or private keys.
-- The dashboard is a bounded local read-only view and does not load private
-  keys or repository contents.
+- The dashboard is a bounded local view and does not display private keys or
+  repository contents. Signed membership and event checks remain in the
+  existing team command layer.
 - On the current Windows build, repository checks require explicit
   `--confirm-unisolated` because an OS-level read-only sandbox is not yet
   available. Do not treat a separate child process as a filesystem sandbox.

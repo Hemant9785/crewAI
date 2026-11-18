@@ -4,7 +4,7 @@
 //! It never creates or migrates a database, never loads device private keys,
 //! and caps every collection before it is handed to a renderer.
 
-use crate::team::{BroadcastRecord, Member, RequestRecord, TaskRecord};
+use crate::team::{BroadcastRecord, Member, RequestRecord, TaskRecord, Team};
 use crate::team_storage::{StorageError, TeamStore};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -12,9 +12,22 @@ use std::path::{Path, PathBuf};
 pub(crate) const TEAM_DB_ENV: &str = "HERDR_TEAM_DB";
 pub(crate) const MAX_DASHBOARD_ROWS: usize = 100;
 
+pub(crate) fn default_database_path() -> PathBuf {
+    if let Some(path) = env::var_os(TEAM_DB_ENV).filter(|value| !value.is_empty()) {
+        return PathBuf::from(path);
+    }
+    env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(env::temp_dir)
+        .join("Herdr")
+        .join("team.sqlite")
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct TeamDashboardSnapshot {
     pub profile: Option<Member>,
+    pub teams: Vec<Team>,
+    pub repositories: Vec<String>,
     pub teammates: Vec<Member>,
     pub tasks: Vec<TaskRecord>,
     pub broadcasts: Vec<BroadcastRecord>,
@@ -25,6 +38,8 @@ impl TeamDashboardSnapshot {
     pub(crate) fn empty() -> Self {
         Self {
             profile: None,
+            teams: Vec::new(),
+            repositories: Vec::new(),
             teammates: Vec::new(),
             tasks: Vec::new(),
             broadcasts: Vec::new(),
@@ -79,6 +94,10 @@ pub(crate) fn load_from_env() -> Result<TeamDashboardSnapshot, TeamDashboardErro
     load_from_path(path)
 }
 
+pub(crate) fn load_default() -> Result<TeamDashboardSnapshot, TeamDashboardError> {
+    load_from_path(default_database_path())
+}
+
 pub(crate) fn load_from_path(
     path: impl AsRef<Path>,
 ) -> Result<TeamDashboardSnapshot, TeamDashboardError> {
@@ -106,8 +125,16 @@ pub(crate) fn load_from_path(
     let tasks = bounded(store.tasks()?);
     let broadcasts = bounded(store.broadcasts(None)?);
     let requests = bounded(store.requests()?);
+    let teams = store.teams()?;
+    let repositories = store
+        .repository_approvals()?
+        .into_iter()
+        .map(|approval| approval.repository_id)
+        .collect();
     Ok(TeamDashboardSnapshot {
         profile,
+        teams,
+        repositories,
         teammates,
         tasks,
         broadcasts,

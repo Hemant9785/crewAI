@@ -419,6 +419,53 @@ impl ClientTeamDashboardSection {
 pub(super) struct ClientTeamDashboardOverlay {
     pub(super) section: ClientTeamDashboardSection,
     pub(super) snapshot: Result<crate::team_view::TeamDashboardSnapshot, String>,
+    pub(super) form: Option<ClientTeamDashboardForm>,
+    pub(super) status: String,
+    pub(super) pending: Option<std::sync::mpsc::Receiver<ClientTeamDashboardResult>>,
+    pub(super) relay_url: Option<String>,
+    pub(super) relay_token: Option<String>,
+    pub(super) share_code: Option<String>,
+}
+
+#[derive(Debug)]
+pub(super) struct ClientTeamDashboardResult {
+    pub(super) status: String,
+    pub(super) relay_credentials: Option<(String, String)>,
+    pub(super) share_code: Option<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClientTeamDashboardAction {
+    Profile,
+    CreateTeam,
+    Invite,
+    Join,
+    Approve,
+    Task,
+    Broadcast,
+    Read,
+}
+
+#[derive(Debug)]
+pub(super) struct ClientTeamDashboardForm {
+    pub(super) action: ClientTeamDashboardAction,
+    pub(super) fields: Vec<(String, super::TextEditor)>,
+    pub(super) current: usize,
+}
+
+impl ClientTeamDashboardAction {
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            Self::Profile => "Set up this device",
+            Self::CreateTeam => "Create team",
+            Self::Invite => "Create invite code",
+            Self::Join => "Join with invite code",
+            Self::Approve => "Approve join request code",
+            Self::Task => "Assign task",
+            Self::Broadcast => "Broadcast message",
+            Self::Read => "Ask this device's Codex",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

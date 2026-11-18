@@ -1,6 +1,6 @@
 # Internet team prototype
 
-Herdr can exchange signed team events through the optional Cloudflare relay when teammates are on different networks. The relay carries bounded team events only; it never receives repository files or repository paths. Run `herdr relay sync` after reconnecting to fetch new events. Automatic background reconnect is not implemented yet.
+Herdr can exchange signed team events through the optional Cloudflare relay when teammates are on different networks. The relay carries bounded team events only; it never receives repository files or repository paths. Use `s` in the Team Dashboard to sync after reconnecting. Automatic background reconnect is not implemented yet.
 
 ## Deploy the relay
 
@@ -16,14 +16,40 @@ npm run deploy
 
 The deployed Worker URL for this project is `https://team-ai-relay.spicygames-hemant9785.workers.dev`. For local development, run `npm run dev -- --ip 127.0.0.1 --port 8787`; localhost HTTP is accepted by Herdr only for this development case.
 
-The relay holds signed event payloads in Cloudflare Durable Object SQLite storage. The current per-team limits are 20,000 events and 64 MiB; there is no expiry or compaction yet. The relay operator can read event payloads. Do not put secrets, repository contents, patches, or local paths in team messages. A team uses one shared bearer token, so send invitation files privately and keep them out of Git.
+The relay holds signed event payloads in Cloudflare Durable Object SQLite storage. The current per-team limits are 20,000 events and 64 MiB; there is no expiry or compaction yet. The relay operator can read event payloads. Do not put secrets, repository contents, patches, or local paths in team messages. A team uses one shared bearer token, so send invite codes privately and keep them out of Git.
 
 ## Share the repository and create a team
 
 Share the application repository through your normal Git host, and have the
-teammate clone it on their laptop. Each person then approves their own local
-checkout with `onboard setup`; repository files are never copied through the
-team relay.
+teammate clone it on their laptop. Repository files are never copied through
+the team relay.
+
+### Set up and invite from Herdr
+
+Open Herdr, open the top-right global menu, and choose **team dashboard**. The
+local database defaults to `%LOCALAPPDATA%\Herdr\team.sqlite`; an existing
+`HERDR_TEAM_DB` value continues to select a custom database.
+
+Use the dashboard shortcuts to complete team setup:
+
+1. Press `p` on each laptop. Enter a unique member ID, display name, role, repository ID, and that laptop's local repository folder.
+2. On the manager laptop, press `c` and enter a team name.
+3. Press `i`, then `y` to copy a signed invite code. Send it only to the intended teammate through a private channel; it includes the shared relay credential.
+4. On the teammate laptop, press `n` and paste the invite code. After joining, press `y` to copy the signed join-request code and send it privately back to the manager.
+5. On the manager laptop, press `a` and paste the join-request code. Herdr verifies it and publishes the approval.
+6. Press `s` on the teammate laptop to fetch the new membership. After approval, `t` assigns a task, `b` broadcasts to the team, and `r` asks local Codex about that laptop's approved repository.
+
+All profile, team, member, task, message, read, and sync actions can be started
+from the dashboard. Invite and join-request codes are copied through the
+clipboard and still need a private person-to-person handoff. Herdr does not
+create JSON files for this dashboard flow. Relay credentials obtained from an
+invite stay in Herdr's memory for the current session. After restarting Herdr,
+press `n` and paste the same invite code to reconnect without accepting the
+invitation a second time. The manager's existing `HERDR_RELAY_URL` and
+`HERDR_RELAY_TOKEN` settings remain in use.
+
+The CLI walkthrough below is an optional scripted alternative that still uses
+JSON files for invitation exchange.
 
 On each device, first create a local profile and approve that device's own repository. Use separate database and identity files on each laptop:
 

@@ -105,7 +105,7 @@ fn render_team_dashboard_overlay(
         i.x,
         i.y,
         i.width,
-        " Team dashboard",
+        " Team dashboard · manage your team here",
         base.add_modifier(Modifier::BOLD),
     );
     put_text(
@@ -113,7 +113,7 @@ fn render_team_dashboard_overlay(
         i.x,
         i.y.saturating_add(1),
         i.width,
-        " Read-only local coordination view",
+        " Team, members, tasks, messages, and local Codex",
         Style::default().fg(p.overlay0).bg(p.panel_bg),
     );
 
@@ -141,83 +141,103 @@ fn render_team_dashboard_overlay(
     let content_height = i.bottom().saturating_sub(content_y.saturating_add(2));
     let content = Rect::new(i.x, content_y, i.width, content_height);
     let mut lines = Vec::new();
-    match &dashboard.snapshot {
-        Err(error) => {
-            lines.push("Team data unavailable".to_string());
-            lines.push(error.clone());
-            lines.push("Set HERDR_TEAM_DB to an existing team database.".to_string());
-            lines.push("Run `herdr onboard setup` to initialize one.".to_string());
+    if let Some(form) = &dashboard.form {
+        lines.push(form.action.label().to_string());
+        lines.push("Type a value and press Enter; Esc cancels.".into());
+        lines.push(String::new());
+        for (index, (label, editor)) in form.fields.iter().enumerate() {
+            lines.push(format!(
+                "{} {label}: {}",
+                if index == form.current { ">" } else { " " },
+                editor.as_str()
+            ));
         }
-        Ok(snapshot) => {
-            if let Some(profile) = snapshot.profile.as_ref() {
-                lines.push(format!(
-                    "Signed-in profile: {} ({})",
-                    profile.display_name,
-                    role_label(&profile.role)
-                ));
-            } else {
-                lines.push("Signed-in profile: not configured".to_string());
+    } else {
+        match &dashboard.snapshot {
+            Err(error) => {
+                lines.push("Team data unavailable".to_string());
+                lines.push(error.clone());
+                lines.push("Press p to set up this device in Herdr.".to_string());
             }
+            Ok(snapshot) => {
+                if let Some(profile) = snapshot.profile.as_ref() {
+                    lines.push(format!(
+                        "Signed-in profile: {} ({})",
+                        profile.display_name,
+                        role_label(&profile.role)
+                    ));
+                } else {
+                    lines.push("Signed-in profile: not configured".to_string());
+                }
+                if let Some(team) = snapshot.teams.first() {
+                    lines.push(format!("Team: {}", team.name));
+                }
+                lines.push(String::new());
+                match dashboard.section {
+                    ClientTeamDashboardSection::Teammates => {
+                        if snapshot.teammates.is_empty() {
+                            lines.push("No teammates recorded.".to_string());
+                        } else {
+                            lines.extend(snapshot.teammates.iter().map(|member| {
+                                format!(
+                                    "{}  [{}]  {}  {}",
+                                    member.display_name,
+                                    member.member_id,
+                                    role_label(&member.role),
+                                    if member.active { "active" } else { "inactive" }
+                                )
+                            }));
+                        }
+                    }
+                    ClientTeamDashboardSection::Tasks => {
+                        if snapshot.tasks.is_empty() {
+                            lines.push("No tasks recorded.".to_string());
+                        } else {
+                            lines.extend(snapshot.tasks.iter().map(|task| {
+                                format!(
+                                    "{}  {}  {} -> {}  {}",
+                                    task.task_id,
+                                    task_status_label(&task.status),
+                                    task.assigner_member_id,
+                                    task.assignee_member_id,
+                                    task.description
+                                )
+                            }));
+                        }
+                    }
+                    ClientTeamDashboardSection::Broadcast => {
+                        if snapshot.broadcasts.is_empty() {
+                            lines.push("No broadcasts recorded.".to_string());
+                        } else {
+                            lines.extend(snapshot.broadcasts.iter().map(|broadcast| {
+                                format!(
+                                    "{}  {}  {}",
+                                    broadcast.scope, broadcast.sender_member_id, broadcast.message
+                                )
+                            }));
+                        }
+                    }
+                    ClientTeamDashboardSection::Requests => {
+                        if snapshot.requests.is_empty() {
+                            lines.push("No requests recorded.".to_string());
+                        } else {
+                            lines.extend(snapshot.requests.iter().map(|request| {
+                                format!(
+                                    "{}  {}  {} -> {}",
+                                    request_kind_label(&request.kind),
+                                    delivery_label(&request.delivery),
+                                    request.requester_member_id,
+                                    request.target_member_id
+                                )
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+        if !dashboard.status.is_empty() {
             lines.push(String::new());
-            match dashboard.section {
-                ClientTeamDashboardSection::Teammates => {
-                    if snapshot.teammates.is_empty() {
-                        lines.push("No teammates recorded.".to_string());
-                    } else {
-                        lines.extend(snapshot.teammates.iter().map(|member| {
-                            format!(
-                                "{}  {}  {}",
-                                member.display_name,
-                                role_label(&member.role),
-                                if member.active { "active" } else { "inactive" }
-                            )
-                        }));
-                    }
-                }
-                ClientTeamDashboardSection::Tasks => {
-                    if snapshot.tasks.is_empty() {
-                        lines.push("No tasks recorded.".to_string());
-                    } else {
-                        lines.extend(snapshot.tasks.iter().map(|task| {
-                            format!(
-                                "{}  {}  {} -> {}  {}",
-                                task.task_id,
-                                task_status_label(&task.status),
-                                task.assigner_member_id,
-                                task.assignee_member_id,
-                                task.description
-                            )
-                        }));
-                    }
-                }
-                ClientTeamDashboardSection::Broadcast => {
-                    if snapshot.broadcasts.is_empty() {
-                        lines.push("No broadcasts recorded.".to_string());
-                    } else {
-                        lines.extend(snapshot.broadcasts.iter().map(|broadcast| {
-                            format!(
-                                "{}  {}  {}",
-                                broadcast.scope, broadcast.sender_member_id, broadcast.message
-                            )
-                        }));
-                    }
-                }
-                ClientTeamDashboardSection::Requests => {
-                    if snapshot.requests.is_empty() {
-                        lines.push("No requests recorded.".to_string());
-                    } else {
-                        lines.extend(snapshot.requests.iter().map(|request| {
-                            format!(
-                                "{}  {}  {} -> {}",
-                                request_kind_label(&request.kind),
-                                delivery_label(&request.delivery),
-                                request.requester_member_id,
-                                request.target_member_id
-                            )
-                        }));
-                    }
-                }
-            }
+            lines.push(dashboard.status.clone());
         }
     }
     for (offset, line) in lines.iter().take(usize::from(content.height)).enumerate() {
@@ -243,7 +263,7 @@ fn render_team_dashboard_overlay(
         i.x,
         i.bottom().saturating_sub(1),
         i.width,
-        " 1-4 select · ↑/↓ or j/k switch · esc close",
+        " p profile c team i invite n join a approve t task b message r read s sync y copy",
         Style::default().fg(p.overlay0).bg(p.panel_bg),
     );
     Some(OverlayRender {

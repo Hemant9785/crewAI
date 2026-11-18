@@ -450,6 +450,21 @@ impl TeamStore {
             .map_err(StorageError::from)
     }
 
+    pub(crate) fn teams(&self) -> Result<Vec<Team>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT team_id, name, authority_member_id, created_at FROM teams ORDER BY created_at, team_id",
+        )?;
+        let rows = statement.query_map([], |row| {
+            Ok(Team {
+                team_id: row.get(0)?,
+                name: row.get(1)?,
+                authority_member_id: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
     pub(crate) fn save_invitation(
         &self,
         invitation: &TeamInvitation,

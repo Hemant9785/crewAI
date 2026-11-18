@@ -42,7 +42,7 @@ mod status;
 pub(crate) mod tab;
 mod target;
 mod task;
-mod team;
+pub(crate) mod team;
 mod title;
 mod workspace;
 pub(crate) mod workspace_bindings;

@@ -15,6 +15,7 @@ The first usable version supports:
 - One team.
 - One device per teammate.
 - Explicit team invitation and device pairing.
+- A Herdr dashboard for local profile setup, team creation, copyable signed invite codes, pasted join-request approval, task assignment, broadcasts, local `/read`, and relay sync. Dashboard pairing uses clipboard codes and does not create JSON handoff files.
 - Local profiles with display name and role label.
 - A linked local repository approved by its owner.
 - Tasks, task status updates, follow-ups, broadcasts, and activity history.

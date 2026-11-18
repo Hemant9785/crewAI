@@ -4,6 +4,12 @@ fn dashboard_without_database() -> ClientShellOverlay {
     ClientShellOverlay::TeamDashboard(ClientTeamDashboardOverlay {
         section: ClientTeamDashboardSection::Teammates,
         snapshot: Err("HERDR_TEAM_DB is not set".into()),
+        form: None,
+        status: String::new(),
+        pending: None,
+        relay_url: None,
+        relay_token: None,
+        share_code: None,
     })
 }
 
