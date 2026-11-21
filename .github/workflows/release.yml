@@ -104,7 +104,7 @@ jobs:
           mkdir -p "$stage"
           cp "herdr/target/$TARGET/release/herdr" "$stage/herdr"
           cp herdr/LICENSE "$stage/LICENSE"
-          "$stage/herdr" --version | grep -F "$GITHUB_REF_NAME"
+          strings "$stage/herdr" | grep -F "$GITHUB_REF_NAME"
           tar -C "$stage" -czf "$ASSET" herdr LICENSE
           file "$ASSET"
 
