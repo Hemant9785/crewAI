@@ -71,7 +71,7 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Use a persistent XDG/home database path instead of `/tmp`.
   - Support Linux signing identities without logging or transmitting their private keys; document their local storage protection.
   - Verify profile creation and identity reload in the Linux release build.
-  - **Progress note (2026-11-21):** EC2 profile setup failed because Linux key storage was unsupported and the dashboard defaulted to `/tmp`. The owner explicitly approved an unencrypted, owner-only Linux identity file for this prototype. The release workflow now includes a Linux onboarding smoke step; pending release build and EC2 retest.
+  - **Progress note (2026-11-21):** EC2 profile setup failed because Linux key storage was unsupported and the dashboard defaulted to `/tmp`. The owner explicitly approved an unencrypted, owner-only Linux identity file for this prototype. Published release `v0.1.5`; its Linux release smoke created the profile database and identity file and verified identity mode `0600`. Focused Windows-hosted tests passed for identity round-trip (2) and persistent path selection (1). Manual EC2 setup retest remains pending. Limitation: Linux identity keys are not encrypted at rest.
 
 ## Known prototype limitations
 
