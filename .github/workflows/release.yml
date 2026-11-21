@@ -65,8 +65,19 @@ jobs:
         run: |
           linker="$RUNNER_TEMP/aarch64-linux-musl-cc"
           cat > "$linker" <<'EOF'
-          #!/usr/bin/env sh
-          exec zig cc -target aarch64-linux-musl "$@"
+          #!/usr/bin/env bash
+          args=()
+          while (($#)); do
+            if [[ "$1" == "--target=aarch64-unknown-linux-musl" ]]; then
+              shift
+            elif [[ "$1" == "--target" && "${2:-}" == "aarch64-unknown-linux-musl" ]]; then
+              shift 2
+            else
+              args+=("$1")
+              shift
+            fi
+          done
+          exec zig cc -target aarch64-linux-musl "${args[@]}"
           EOF
           chmod +x "$linker"
           echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=$linker" >> "$GITHUB_ENV"
