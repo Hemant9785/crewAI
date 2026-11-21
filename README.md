@@ -70,11 +70,19 @@ $env:HERDR_CONFIG_PATH = 'E:\crewAI-data\config.toml'
 ```
 
 The application opens the Herdr terminal workspace. Open the top-right global
-menu and choose **team dashboard**. The dashboard has four sections: teammates,
-tasks, broadcasts, and requests. Once Herdr is open, use the dashboard to set up
-your profile, create a team, invite or approve teammates, assign tasks, send
-broadcasts, ask local Codex questions, and sync. You do not need a separate
-PowerShell window for those team actions.
+menu and choose **team dashboard**. The dashboard has five sections: teammates,
+tasks, broadcasts, requests, and access. Use it to set up your profile, create a
+team, invite or approve teammates, assign work to one or more members, update
+task status, send broadcasts, inspect repository access, ask local or remote
+Codex questions, and sync. You do not need a separate PowerShell window for
+those team actions.
+
+The workspace also has a Team panel beside the terminal. It shows scrollable,
+newest-first task and broadcast activity, task completion announcements, and
+sync counts. Use the mouse wheel, `Ctrl+PageUp/PageDown` over Tasks, or
+`Alt+PageUp/PageDown` over Broadcasts to browse history. Click a linked task to
+focus its terminal pane. The Spaces and Agents sidebar stays in place. Use
+`F6` or the Team tab in the top bar to hide or show the panel.
 
 Dashboard shortcuts:
 
@@ -85,19 +93,27 @@ Dashboard shortcuts:
 | `i` | Create a signed invite code; press `y` to copy it |
 | `n` | Paste an invite code, or reconnect with it after restart |
 | `a` | Paste and approve a teammate's signed join request code |
-| `t` | Assign a task to a member ID |
+| `t` | Enter a task description, then select one or more team members with `Space`; press `Enter` to assign |
 | `b` | Broadcast a team message |
+| `q` | Request a remote repository check from a teammate |
 | `r` | Ask Codex about this device's approved local repository |
-| `s` | Sync the team through the Internet relay |
+| `s` | Sync the team manually (also available as a fallback to background sync) |
 | `y` | Copy the current invite or join-request code |
+| `F6` | Show or hide the Team panel |
+
+In the Tasks section, use `j`/`k` to select a task, `a` to accept, `w` to mark
+it in progress, `d` to complete, `x` to cancel, and `!` to flag it for
+attention. Right-click an agent pane and choose **Link team task** to show its
+task in Agents; this pane-to-task link is local to the current Herdr session.
 
 For a first teammate: press `i`, then `y` to copy the invite code. Send it
 privately to them. They set up their device with `p`, press `n`, and paste the
 code. They press `y` to copy their signed join request and send it privately
 back to you. Press `a` and paste that request to approve the new member. Invite
 codes include the team's relay credential, so never commit or post one publicly.
-Herdr keeps the credential in memory for the current session; after a restart,
-the teammate can paste the same valid invite again to reconnect.
+Herdr keeps the credential in memory for the current session and starts
+background relay sync after a successful invite, join, or approval. After a
+restart, the teammate can paste the same valid invite again to reconnect.
 
 ## Initialize a local profile from the UI
 
@@ -134,6 +150,10 @@ The supported roles are `manager`, `group-head`, `part-head`, and
 
 - Create a team, issue an invitation, join from another laptop, and approve
   the signed join request code.
+- Assign signed tasks to one or several selected teammates, update task status
+  from the dashboard, and see completion announcements in team activity.
+- Browse newest-first task and broadcast feeds, link local agent panes to tasks,
+  inspect permission decisions, and create remote `/check` requests in Herdr.
 - Send signed `/task` assignments and `/brodcast` (or `/broadcast`) messages
   through LAN sync or the optional Cloudflare relay.
 - Run `/read` locally to ask a separate Codex CLI session about this device's
@@ -141,7 +161,9 @@ The supported roles are `manager`, `group-head`, `part-head`, and
   the team relay.
 - Keep repository files, SQLite data, and private keys on their owning device.
   The relay stores bounded team events and delivery metadata.
-- Run `herdr relay sync` on the receiving laptop to fetch new events.
+- Background relay sync starts after invite/join/approval when relay credentials
+  are available in the Herdr session. Manual sync remains available in the
+  dashboard.
 
 See [the Internet team walkthrough](docs/internet-team.md) for deployment,
 setup, invitation, and command examples.
@@ -150,8 +172,12 @@ setup, invitation, and command examples.
 
 - A physical two-laptop Internet run has not been verified. Local two-profile
   testing against `wrangler dev` is documented.
-- Relay downloads currently require a manual `herdr relay sync`; there is no
-  background reconnect worker.
+- The permission graph is read-only in the dashboard. Grant/revoke UI is pending
+  because permission changes do not yet have a signed, synchronized command
+  path.
+- Pane-to-task links are session-local and reset when Herdr exits.
+- A physical two-laptop run of background Internet sync has not yet been
+  verified.
 - The prototype has no CLI for member revocation or relay-token rotation.
 - The relay is not end-to-end encrypted; its operator can read event payloads.
   Keep secrets, repository contents, and local paths out of team messages.

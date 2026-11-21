@@ -451,6 +451,9 @@ impl ClientShellState {
     }
 
     pub(super) fn insert_overlay_text(&mut self, text: &str) -> bool {
+        if self.overlay.is_none() && self.team_panel_composer_focused {
+            return self.team_panel_composer.insert(text);
+        }
         if self.insert_worktree_overlay_text(text) {
             return true;
         }
@@ -605,6 +608,36 @@ impl ClientShellState {
             if self.team_dashboard_form_key(key, outcome) {
                 return;
             }
+            let task_section = matches!(
+                self.overlay.as_ref(),
+                Some(ClientShellOverlay::TeamDashboard(dashboard))
+                    if dashboard.section == ClientTeamDashboardSection::Tasks
+            );
+            if task_section {
+                let status = match key.code {
+                    KeyCode::Char('j') => {
+                        self.move_team_dashboard_task(1);
+                        outcome.repaint = true;
+                        return;
+                    }
+                    KeyCode::Char('k') => {
+                        self.move_team_dashboard_task(-1);
+                        outcome.repaint = true;
+                        return;
+                    }
+                    KeyCode::Char('a') => Some("delivered"),
+                    KeyCode::Char('w') => Some("in_progress"),
+                    KeyCode::Char('d') => Some("done"),
+                    KeyCode::Char('x') => Some("cancelled"),
+                    KeyCode::Char('!') => Some("needs_attention"),
+                    _ => None,
+                };
+                if let Some(status) = status {
+                    self.update_selected_team_task(status);
+                    outcome.repaint = true;
+                    return;
+                }
+            }
             match key.code {
                 KeyCode::Esc => {
                     self.overlay = None;
@@ -634,6 +667,10 @@ impl ClientShellState {
                     self.select_team_dashboard_section(3);
                     outcome.repaint = true;
                 }
+                KeyCode::Char('5') => {
+                    self.select_team_dashboard_section(4);
+                    outcome.repaint = true;
+                }
                 KeyCode::Char('p') => {
                     self.begin_team_dashboard_action(ClientTeamDashboardAction::Profile)
                 }
@@ -658,14 +695,23 @@ impl ClientShellState {
                 KeyCode::Char('r') => {
                     self.begin_team_dashboard_action(ClientTeamDashboardAction::Read)
                 }
+                KeyCode::Char('q') => {
+                    self.begin_team_dashboard_action(ClientTeamDashboardAction::Check)
+                }
                 KeyCode::Char('s') => self.run_team_dashboard_sync(),
                 KeyCode::Char('y') => {
-                    if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
+                    if let Some(ClientShellOverlay::TeamDashboard(dashboard)) =
+                        self.overlay.as_mut()
+                    {
                         if let Some(code) = dashboard.share_code.as_ref() {
-                            outcome.actions.push(ClientShellAction::ClipboardWrite(code.as_bytes().to_vec()));
-                            dashboard.status = "Code copied. Share it privately with your teammate.".into();
+                            outcome
+                                .actions
+                                .push(ClientShellAction::ClipboardWrite(code.as_bytes().to_vec()));
+                            dashboard.status =
+                                "Code copied. Share it privately with your teammate.".into();
                         } else {
-                            dashboard.status = "Create an invite code or join request first.".into();
+                            dashboard.status =
+                                "Create an invite code or join request first.".into();
                         }
                     }
                     outcome.repaint = true;
@@ -686,6 +732,37 @@ impl ClientShellState {
         }
 
         if self.route_settings_key(key, outcome) {
+            return;
+        }
+
+        if matches!(self.overlay, Some(ClientShellOverlay::AgentTaskPicker(_))) {
+            match key.code {
+                KeyCode::Esc => self.overlay = None,
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if let Some(ClientShellOverlay::AgentTaskPicker(picker)) = self.overlay.as_mut()
+                    {
+                        picker.highlighted = picker.highlighted.saturating_sub(1);
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if let Some(ClientShellOverlay::AgentTaskPicker(picker)) = self.overlay.as_mut()
+                    {
+                        picker.highlighted = picker
+                            .highlighted
+                            .saturating_add(1)
+                            .min(picker.tasks.len().saturating_sub(1));
+                    }
+                }
+                KeyCode::Enter => {
+                    let index = match self.overlay.as_ref() {
+                        Some(ClientShellOverlay::AgentTaskPicker(picker)) => picker.highlighted,
+                        _ => return,
+                    };
+                    self.activate_agent_task_picker(index);
+                }
+                _ => {}
+            }
+            outcome.repaint = true;
             return;
         }
 
@@ -1024,6 +1101,7 @@ impl ClientShellState {
         self.overlay = Some(ClientShellOverlay::TeamDashboard(
             ClientTeamDashboardOverlay {
                 section: ClientTeamDashboardSection::Teammates,
+                task_cursor: 0,
                 snapshot: crate::team_view::load_default().map_err(|error| error.to_string()),
                 form: None,
                 status: String::new(),
@@ -1060,18 +1138,26 @@ impl ClientShellState {
             }
             ClientTeamDashboardAction::Invite => {
                 if let Err(error) = self.start_team_dashboard_action(action, Vec::new()) {
-                    if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
+                    if let Some(ClientShellOverlay::TeamDashboard(dashboard)) =
+                        self.overlay.as_mut()
+                    {
                         dashboard.status = error;
                     }
                 }
                 return;
             }
-            ClientTeamDashboardAction::Join => vec![("Invite code (paste)".into(), TextEditor::default())],
-            ClientTeamDashboardAction::Approve => vec![("Join request code (paste)".into(), TextEditor::default())],
-            ClientTeamDashboardAction::Task => vec![
-                ("Assignee member ID".into(), TextEditor::default()),
-                ("Task description".into(), TextEditor::default()),
-            ],
+            ClientTeamDashboardAction::Join => {
+                vec![("Invite code (paste)".into(), TextEditor::default())]
+            }
+            ClientTeamDashboardAction::Approve => {
+                vec![("Join request code (paste)".into(), TextEditor::default())]
+            }
+            ClientTeamDashboardAction::Task => {
+                vec![("Task description".into(), TextEditor::default())]
+            }
+            ClientTeamDashboardAction::TaskStatus => {
+                unreachable!("status actions do not use a form")
+            }
             ClientTeamDashboardAction::Broadcast => {
                 vec![("Message to the team".into(), TextEditor::default())]
             }
@@ -1094,12 +1180,37 @@ impl ClientShellState {
                     ),
                 ]
             }
+            ClientTeamDashboardAction::Check => {
+                let repository = match self.overlay.as_ref() {
+                    Some(ClientShellOverlay::TeamDashboard(dashboard)) => dashboard
+                        .snapshot
+                        .as_ref()
+                        .ok()
+                        .and_then(|snapshot| snapshot.repositories.first())
+                        .cloned()
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
+                vec![
+                    (
+                        "Repository ID approved for this request".into(),
+                        TextEditor::new(&repository, false),
+                    ),
+                    (
+                        "Question for teammate's Codex".into(),
+                        TextEditor::default(),
+                    ),
+                ]
+            }
         };
         if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
             dashboard.form = Some(ClientTeamDashboardForm {
                 action,
                 fields,
                 current: 0,
+                member_picker_active: false,
+                member_cursor: 0,
+                selected_member_ids: Vec::new(),
             });
             dashboard.status.clear();
         }
@@ -1110,6 +1221,16 @@ impl ClientShellState {
         key: &crate::input::TerminalKey,
         outcome: &mut ClientShellInput,
     ) -> bool {
+        let picking_task_members = matches!(
+            self.overlay.as_ref(),
+            Some(ClientShellOverlay::TeamDashboard(dashboard))
+                if dashboard.form.as_ref().is_some_and(|form|
+                    matches!(form.action, ClientTeamDashboardAction::Task | ClientTeamDashboardAction::Check)
+                        && form.member_picker_active)
+        );
+        if picking_task_members {
+            return self.team_dashboard_member_picker_key(key, outcome);
+        }
         let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() else {
             return false;
         };
@@ -1122,6 +1243,41 @@ impl ClientShellState {
                 outcome.repaint = true;
             }
             KeyCode::Enter => {
+                if form.action == ClientTeamDashboardAction::Task {
+                    let description = form
+                        .fields
+                        .first()
+                        .map(|(_, editor)| editor.as_str().trim())
+                        .unwrap_or_default();
+                    if description.is_empty() {
+                        dashboard.status = "Enter a task description first".into();
+                    } else {
+                        form.member_picker_active = true;
+                        form.member_cursor = 0;
+                        dashboard.status =
+                            "Select teammates with Space, then press Enter to assign".into();
+                    }
+                    outcome.repaint = true;
+                    return true;
+                }
+                if form.action == ClientTeamDashboardAction::Check {
+                    if form.current + 1 < form.fields.len() {
+                        form.current += 1;
+                    } else if form
+                        .fields
+                        .iter()
+                        .any(|(_, editor)| editor.as_str().trim().is_empty())
+                    {
+                        dashboard.status = "Enter a repository ID and question first".into();
+                    } else {
+                        form.member_picker_active = true;
+                        form.member_cursor = 0;
+                        dashboard.status =
+                            "Select one teammate, then press Enter to send the request".into();
+                    }
+                    outcome.repaint = true;
+                    return true;
+                }
                 if form.current + 1 < form.fields.len() {
                     form.current += 1;
                 } else {
@@ -1151,6 +1307,155 @@ impl ClientShellState {
             }
         }
         true
+    }
+
+    fn team_dashboard_member_picker_key(
+        &mut self,
+        key: &crate::input::TerminalKey,
+        outcome: &mut ClientShellInput,
+    ) -> bool {
+        let mut assignment = None;
+        {
+            let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() else {
+                return false;
+            };
+            let members = dashboard
+                .snapshot
+                .as_ref()
+                .map(|snapshot| {
+                    snapshot
+                        .teammates
+                        .iter()
+                        .filter(|member| member.active)
+                        .map(|member| member.member_id.clone())
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let Some(form) = dashboard.form.as_mut() else {
+                return false;
+            };
+            if !matches!(
+                form.action,
+                ClientTeamDashboardAction::Task | ClientTeamDashboardAction::Check
+            ) || !form.member_picker_active
+            {
+                return false;
+            }
+            let is_check = form.action == ClientTeamDashboardAction::Check;
+            match key.code {
+                KeyCode::Esc => {
+                    dashboard.form = None;
+                    dashboard.status = if is_check {
+                        "Repository question cancelled".into()
+                    } else {
+                        "Task assignment cancelled".into()
+                    };
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if !members.is_empty() {
+                        form.member_cursor = form.member_cursor.saturating_sub(1);
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if !members.is_empty() {
+                        form.member_cursor = (form.member_cursor + 1).min(members.len() - 1);
+                    }
+                }
+                KeyCode::Char(' ') => {
+                    if let Some(member_id) = members.get(form.member_cursor) {
+                        if is_check {
+                            form.selected_member_ids = vec![member_id.clone()];
+                        } else if form.selected_member_ids.iter().any(|id| id == member_id) {
+                            form.selected_member_ids.retain(|id| id != member_id);
+                        } else {
+                            form.selected_member_ids.push(member_id.clone());
+                        }
+                    }
+                }
+                KeyCode::Enter => {
+                    if form.selected_member_ids.is_empty() {
+                        dashboard.status = if is_check {
+                            "Select one active teammate".into()
+                        } else {
+                            "Select at least one active teammate".into()
+                        };
+                    } else {
+                        if is_check {
+                            assignment = Some((
+                                ClientTeamDashboardAction::Check,
+                                vec![
+                                    form.selected_member_ids[0].clone(),
+                                    form.fields[0].1.as_str().trim().to_owned(),
+                                    form.fields[1].1.as_str().trim().to_owned(),
+                                ],
+                            ));
+                        } else {
+                            let description = form
+                                .fields
+                                .first()
+                                .map(|(_, editor)| editor.as_str().trim().to_owned())
+                                .unwrap_or_default();
+                            assignment = Some((
+                                ClientTeamDashboardAction::Task,
+                                vec![form.selected_member_ids.join("\n"), description],
+                            ));
+                        }
+                        dashboard.form = None;
+                    }
+                }
+                _ => {}
+            }
+        }
+        if let Some((action, values)) = assignment {
+            if let Err(error) = self.start_team_dashboard_action(action, values) {
+                if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
+                    dashboard.status = error;
+                }
+            }
+        }
+        outcome.repaint = true;
+        true
+    }
+
+    fn move_team_dashboard_task(&mut self, delta: isize) {
+        let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() else {
+            return;
+        };
+        let count = dashboard
+            .snapshot
+            .as_ref()
+            .map(|snapshot| snapshot.tasks.len())
+            .unwrap_or_default();
+        if count > 0 {
+            dashboard.task_cursor =
+                (dashboard.task_cursor as isize + delta).rem_euclid(count as isize) as usize;
+        }
+    }
+
+    fn update_selected_team_task(&mut self, status: &str) {
+        let selected = match self.overlay.as_ref() {
+            Some(ClientShellOverlay::TeamDashboard(dashboard)) => dashboard
+                .snapshot
+                .as_ref()
+                .ok()
+                .and_then(|snapshot| snapshot.tasks.get(dashboard.task_cursor))
+                .map(|task| task.task_id.clone()),
+            _ => None,
+        };
+        let Some(task_id) = selected else {
+            if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
+                dashboard.status = "Select a task first".into();
+            }
+            return;
+        };
+        if let Err(error) = self.start_team_dashboard_action(
+            ClientTeamDashboardAction::TaskStatus,
+            vec![task_id, status.to_owned()],
+        ) {
+            if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
+                dashboard.status = error;
+            }
+        }
     }
 
     fn start_team_dashboard_action(
@@ -1184,16 +1489,18 @@ impl ClientShellState {
             if let (Some(team_id), Some(authority_id)) = (team.as_ref(), authority.as_ref()) {
                 let bundle = crate::cli::team::decode_invite_code(&values[0])
                     .map_err(|error| error.to_string())?;
-                crate::cli::team::validate_invite_for_existing_team(
-                    &bundle,
-                    team_id,
-                    authority_id,
-                )
-                .map_err(|error| error.to_string())?;
+                crate::cli::team::validate_invite_for_existing_team(&bundle, team_id, authority_id)
+                    .map_err(|error| error.to_string())?;
+                if let Some(credential_sink) = self.relay_credential_sink.as_ref() {
+                    let _ =
+                        credential_sink.set(bundle.relay_url.clone(), bundle.relay_token.clone());
+                }
                 if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
                     dashboard.relay_url = Some(bundle.relay_url);
                     dashboard.relay_token = Some(bundle.relay_token);
-                    dashboard.status = "Invite verified. Relay access is ready for this Herdr session; press s to sync.".into();
+                    dashboard.status =
+                        "Invite verified. Background relay sync is ready; press s to sync now."
+                            .into();
                 }
                 return Ok(());
             }
@@ -1208,6 +1515,7 @@ impl ClientShellState {
             };
             let database = database.clone();
             let identity = identity.clone();
+            let credential_sink = self.relay_credential_sink.clone();
             let input_code = values.first().cloned().unwrap_or_default();
             let (sender, receiver) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
@@ -1219,26 +1527,25 @@ impl ClientShellState {
                 let operation = (|| -> Result<(), String> {
                     match action {
                         Action::Invite => {
-                            let team_id = team_id.as_deref().ok_or("Create or join a team first")?;
+                            let team_id =
+                                team_id.as_deref().ok_or("Create or join a team first")?;
                             let bundle = crate::cli::team::create_invite_bundle(
-                                &database,
-                                team_id,
-                                &identity,
+                                &database, team_id, &identity,
                             )
                             .map_err(|error| error.to_string())?;
                             result.share_code = Some(
                                 crate::cli::team::encode_invite_code(&bundle)
                                     .map_err(|error| error.to_string())?,
                             );
+                            result.relay_credentials =
+                                Some((bundle.relay_url.clone(), bundle.relay_token.clone()));
                             result.status = "Invite code ready. Press y to copy it, then send it privately to your teammate.".into();
                         }
                         Action::Join => {
                             let bundle = crate::cli::team::decode_invite_code(&input_code)
                                 .map_err(|error| error.to_string())?;
                             let request = crate::cli::team::accept_invite_bundle(
-                                &database,
-                                &identity,
-                                &bundle,
+                                &database, &identity, &bundle,
                             )
                             .map_err(|error| error.to_string())?;
                             result.share_code = Some(
@@ -1249,7 +1556,8 @@ impl ClientShellState {
                             result.status = "Joined locally. Press y to copy your signed request code and send it privately to the manager.".into();
                         }
                         Action::Approve => {
-                            let team_id = team_id.as_deref().ok_or("Create or join a team first")?;
+                            let team_id =
+                                team_id.as_deref().ok_or("Create or join a team first")?;
                             let request = crate::cli::team::decode_join_code(&input_code)
                                 .map_err(|error| error.to_string())?;
                             let credentials = relay_url.as_deref().zip(relay_token.as_deref());
@@ -1261,7 +1569,14 @@ impl ClientShellState {
                                 credentials,
                             )
                             .map_err(|error| error.to_string())?;
-                            result.status = format!("Approved {}. Team sync completed.", request.member.display_name);
+                            result.relay_credentials = relay_url
+                                .as_ref()
+                                .zip(relay_token.as_ref())
+                                .map(|(url, token)| (url.clone(), token.clone()));
+                            result.status = format!(
+                                "Approved {}. Team sync completed.",
+                                request.member.display_name
+                            );
                         }
                         _ => unreachable!(),
                     }
@@ -1269,6 +1584,11 @@ impl ClientShellState {
                 })();
                 if let Err(error) = operation {
                     result.status = format!("Could not complete: {error}");
+                }
+                if let (Some(credential_sink), Some((url, token))) =
+                    (credential_sink, result.relay_credentials.as_ref())
+                {
+                    let _ = credential_sink.set(url.clone(), token.clone());
                 }
                 let _ = sender.send(result);
             });
@@ -1280,6 +1600,21 @@ impl ClientShellState {
         }
         let db = database.to_string_lossy().into_owned();
         let id = identity.to_string_lossy().into_owned();
+        let task_assignees = if action == Action::Task {
+            values
+                .first()
+                .map(|value| {
+                    value
+                        .lines()
+                        .map(str::trim)
+                        .filter(|id| !id.is_empty())
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
         let args = match action {
             Action::Profile => vec![
                 "onboard".into(),
@@ -1324,8 +1659,27 @@ impl ClientShellState {
                 "--identity".into(),
                 id.clone(),
                 "--assignee".into(),
-                values[0].clone(),
+                task_assignees
+                    .first()
+                    .cloned()
+                    .ok_or("Select at least one active teammate")?,
                 "--description".into(),
+                values[1].clone(),
+            ],
+            Action::TaskStatus => vec![
+                "task".into(),
+                "status".into(),
+                "--db".into(),
+                db.clone(),
+                "--team".into(),
+                team.ok_or("Create or join a team first")?,
+                "--actor".into(),
+                actor.ok_or("Set up your local profile first with p")?,
+                "--identity".into(),
+                id.clone(),
+                "--task".into(),
+                values[0].clone(),
+                "--status".into(),
                 values[1].clone(),
             ],
             Action::Broadcast => vec![
@@ -1353,7 +1707,40 @@ impl ClientShellState {
                 "--question".into(),
                 values[0].clone(),
             ],
+            Action::Check => vec![
+                "check".into(),
+                "create".into(),
+                "--db".into(),
+                db.clone(),
+                "--team".into(),
+                team.ok_or("Create or join a team first")?,
+                "--actor".into(),
+                actor.ok_or("Set up your local profile first with p")?,
+                "--identity".into(),
+                id.clone(),
+                "--target".into(),
+                values[0].clone(),
+                "--repository".into(),
+                values[1].clone(),
+                "--question".into(),
+                values[2].clone(),
+            ],
         };
+        let command_batches = if action == Action::Task {
+            task_assignees
+                .iter()
+                .map(|assignee| {
+                    let mut one = args.clone();
+                    if let Some(index) = one.iter().position(|value| value == "--assignee") {
+                        one[index + 1] = assignee.clone();
+                    }
+                    one
+                })
+                .collect::<Vec<_>>()
+        } else {
+            vec![args]
+        };
+        let command_count = command_batches.len();
         let executable = std::env::current_exe().map_err(|e| e.to_string())?;
         let (relay_url, relay_token) = match self.overlay.as_ref() {
             Some(ClientShellOverlay::TeamDashboard(dashboard)) => {
@@ -1366,42 +1753,51 @@ impl ClientShellState {
             if let Some(parent) = database.parent() {
                 let _ = std::fs::create_dir_all(parent);
             }
-            let mut command = std::process::Command::new(executable);
-            command
-                .args(&args)
-                .env(crate::team_view::TEAM_DB_ENV, &database);
-            if let Some(url) = relay_url {
-                command.env("HERDR_RELAY_URL", url);
-            }
-            if let Some(token) = relay_token {
-                command.env("HERDR_RELAY_TOKEN", token);
-            }
-            let result = command.output();
-            let completion = match result {
-                Ok(output) => {
-                    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-                    if !output.status.success() {
-                        text.push_str(&String::from_utf8_lossy(&output.stderr));
-                    }
-                    if text.is_empty() {
-                        text = format!("Command exited with {}", output.status);
-                    }
-                    let text = text.chars().take(2000).collect::<String>();
-                    ClientTeamDashboardResult {
-                        status: if output.status.success() {
-                            format!("Completed:\n{text}")
-                        } else {
-                            format!("Could not complete:\n{text}")
-                        },
-                        relay_credentials: None,
-                        share_code: None,
-                    }
+            let mut outputs = Vec::new();
+            let mut succeeded = 0usize;
+            for args in command_batches {
+                let mut command = std::process::Command::new(&executable);
+                command
+                    .args(&args)
+                    .env(crate::team_view::TEAM_DB_ENV, &database);
+                if let Some(url) = relay_url.as_ref() {
+                    command.env("HERDR_RELAY_URL", url);
                 }
-                Err(e) => ClientTeamDashboardResult {
-                    status: format!("Could not start command: {e}"),
-                    relay_credentials: None,
-                    share_code: None,
-                },
+                if let Some(token) = relay_token.as_ref() {
+                    command.env("HERDR_RELAY_TOKEN", token);
+                }
+                match command.output() {
+                    Ok(output) => {
+                        let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
+                        if !output.status.success() {
+                            text.push_str(&String::from_utf8_lossy(&output.stderr));
+                        } else {
+                            succeeded += 1;
+                        }
+                        if text.is_empty() {
+                            text = format!("Command exited with {}", output.status);
+                        }
+                        outputs.push(text);
+                    }
+                    Err(error) => outputs.push(format!("Could not start command: {error}")),
+                }
+            }
+            let details = outputs.join("\n").chars().take(2000).collect::<String>();
+            let status = if succeeded == command_count {
+                if action == Action::Task && command_count > 1 {
+                    format!("Assigned to {succeeded} teammate(s).\n{details}")
+                } else {
+                    format!("Completed:\n{details}")
+                }
+            } else if action == Action::Task && succeeded > 0 {
+                format!("Assigned to {succeeded} of {command_count} teammate(s).\n{details}")
+            } else {
+                format!("Could not complete:\n{details}")
+            };
+            let completion = ClientTeamDashboardResult {
+                status,
+                relay_credentials: None,
+                share_code: None,
             };
             let _ = sender.send(completion);
         });
@@ -1482,6 +1878,7 @@ impl ClientShellState {
     }
 
     pub(crate) fn tick_team_dashboard(&mut self) -> bool {
+        let credential_sink = self.relay_credential_sink.clone();
         let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() else {
             return false;
         };
@@ -1493,6 +1890,9 @@ impl ClientShellState {
                 dashboard.pending = None;
                 dashboard.status = result.status;
                 if let Some((url, token)) = result.relay_credentials {
+                    if let Some(credential_sink) = credential_sink {
+                        let _ = credential_sink.set(url.clone(), token.clone());
+                    }
                     dashboard.relay_url = Some(url);
                     dashboard.relay_token = Some(token);
                 }

@@ -54,6 +54,7 @@ impl ClientContextMenuOverlay {
                 source_pane_id,
                 has_manual_label,
                 right_click_passthrough,
+                has_task_link,
                 ..
             } => {
                 let mut items = vec![item("Rename pane", Action::RenamePane)];
@@ -62,6 +63,10 @@ impl ClientContextMenuOverlay {
                 }
                 if source_pane_id.is_some() {
                     items.push(item("Swap with focused pane", Action::SwapWithFocusedPane));
+                }
+                items.extend([item("Link team task...", Action::LinkTeamTask)]);
+                if *has_task_link {
+                    items.push(item("Unlink team task", Action::UnlinkTeamTask));
                 }
                 items.extend([
                     item("Split right", Action::SplitRight),
@@ -153,6 +158,7 @@ impl ClientShellState {
             .focused_pane_id
             .clone()
             .filter(|focused| focused != &pane_id);
+        let has_task_link = self.agent_task_links.contains_key(&pane_id);
         self.overlay = Some(ClientShellOverlay::ContextMenu(ClientContextMenuOverlay {
             target: ClientContextMenuTarget::Pane {
                 pane_id,
@@ -160,6 +166,7 @@ impl ClientShellState {
                 source_pane_id,
                 has_manual_label: pane.label.is_some(),
                 right_click_passthrough: pane.right_click_passthrough,
+                has_task_link,
             },
             x,
             y,
@@ -206,6 +213,7 @@ impl ClientShellState {
                 workspace_id,
                 source_pane_id,
                 right_click_passthrough,
+                has_task_link: _,
                 ..
             } => self.activate_pane_context_action(
                 pane_id,
@@ -448,7 +456,104 @@ impl ClientShellState {
                 outcome,
             ),
             ClientContextMenuAction::ClosePane => self.request_pane_close(pane_id, outcome),
+            ClientContextMenuAction::LinkTeamTask => self.open_agent_task_picker(pane_id),
+            ClientContextMenuAction::UnlinkTeamTask => {
+                self.agent_task_links.remove(&pane_id);
+                self.team_panel_status = Some("Pane unlinked from team task".into());
+            }
             _ => {}
         }
+    }
+
+    fn open_agent_task_picker(&mut self, pane_id: String) {
+        let tasks = self
+            .team_panel_snapshot
+            .as_ref()
+            .ok()
+            .map(eligible_agent_tasks)
+            .unwrap_or_default();
+        self.overlay = Some(ClientShellOverlay::AgentTaskPicker(
+            ClientAgentTaskPickerOverlay {
+                pane_id,
+                tasks,
+                highlighted: 0,
+            },
+        ));
+    }
+
+    pub(super) fn activate_agent_task_picker(&mut self, index: usize) {
+        let Some(ClientShellOverlay::AgentTaskPicker(picker)) = self.overlay.take() else {
+            return;
+        };
+        if let Some((task_id, _, _)) = picker.tasks.get(index) {
+            self.agent_task_links
+                .retain(|_, linked_task_id| linked_task_id != task_id);
+            self.agent_task_links
+                .insert(picker.pane_id, task_id.clone());
+            self.team_panel_status = Some("Pane linked to team task".into());
+        } else {
+            self.team_panel_status = Some("No active task assigned to your profile".into());
+        }
+    }
+}
+
+fn eligible_agent_tasks(
+    snapshot: &crate::team_view::TeamDashboardSnapshot,
+) -> Vec<(String, String, String)> {
+    let Some(profile_id) = snapshot.profile.as_ref().map(|profile| &profile.member_id) else {
+        return Vec::new();
+    };
+    snapshot
+        .tasks
+        .iter()
+        .filter(|task| {
+            task.assignee_member_id == *profile_id
+                && !matches!(
+                    task.status,
+                    crate::team::TaskStatus::Done
+                        | crate::team::TaskStatus::Cancelled
+                        | crate::team::TaskStatus::Failed
+                )
+        })
+        .map(|task| {
+            (
+                task.task_id.clone(),
+                task.description.clone(),
+                super::team_panel::task_status(&task.status).to_owned(),
+            )
+        })
+        .collect()
+}
+
+#[cfg(test)]
+mod task_picker_tests {
+    use super::eligible_agent_tasks;
+
+    #[test]
+    fn picker_only_lists_active_tasks_assigned_to_local_profile() {
+        let mut snapshot = crate::team_view::TeamDashboardSnapshot::empty();
+        snapshot.profile = Some(crate::team::Member {
+            member_id: "local".into(),
+            display_name: "Local".into(),
+            role: crate::team::Role::Implementer,
+            active: true,
+        });
+        let task = |task_id: &str, assignee: &str, status| crate::team::TaskRecord {
+            task_id: task_id.into(),
+            assigner_member_id: "manager".into(),
+            assignee_member_id: assignee.into(),
+            description: task_id.into(),
+            status,
+            created_at: 1,
+        };
+        snapshot.tasks = vec![
+            task("local-active", "local", crate::team::TaskStatus::InProgress),
+            task("other-active", "other", crate::team::TaskStatus::Queued),
+            task("local-done", "local", crate::team::TaskStatus::Done),
+        ];
+
+        let eligible = eligible_agent_tasks(&snapshot);
+        assert_eq!(eligible.len(), 1);
+        assert_eq!(eligible[0].0, "local-active");
     }
 }

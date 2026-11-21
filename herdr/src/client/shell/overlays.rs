@@ -80,8 +80,88 @@ pub(crate) fn render_client_overlay(
             worktree_overlays::render_worktree_remove_overlay(b, v, p)
         }
         ClientShellOverlay::TeamDashboard(v) => render_team_dashboard_overlay(b, v, p),
+        ClientShellOverlay::AgentTaskPicker(v) => render_agent_task_picker_overlay(b, v, p),
         ClientShellOverlay::ContextMenu(_) | ClientShellOverlay::GlobalMenu(_) => None,
     }
+}
+
+fn render_agent_task_picker_overlay(
+    b: &mut Buffer,
+    picker: &ClientAgentTaskPickerOverlay,
+    p: &Palette,
+) -> Option<OverlayRender> {
+    let height = (picker.tasks.len().min(10) as u16).saturating_add(5).max(7);
+    let q = popup(b.area, 68, height)?;
+    let i = panel(b, q, p.accent, p.panel_bg)?;
+    let base = Style::default().fg(p.text).bg(p.panel_bg);
+    put_text(
+        b,
+        i.x,
+        i.y,
+        i.width,
+        " Link this pane to a task",
+        base.add_modifier(Modifier::BOLD),
+    );
+    put_text(
+        b,
+        i.x,
+        i.y.saturating_add(1),
+        i.width,
+        " Active tasks assigned to your profile",
+        Style::default().fg(p.overlay0).bg(p.panel_bg),
+    );
+    let mut rows = Vec::new();
+    if picker.tasks.is_empty() {
+        put_text(
+            b,
+            i.x,
+            i.y.saturating_add(3),
+            i.width,
+            " No eligible active tasks",
+            Style::default().fg(p.overlay0).bg(p.panel_bg),
+        );
+    } else {
+        for (index, (id, description, status)) in picker
+            .tasks
+            .iter()
+            .enumerate()
+            .take(i.height.saturating_sub(4) as usize)
+        {
+            let y = i.y.saturating_add(3 + index as u16);
+            let row = Rect::new(i.x, y, i.width, 1);
+            let style = if index == picker.highlighted {
+                Style::default()
+                    .fg(p.panel_bg)
+                    .bg(p.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                base
+            };
+            put_text(
+                b,
+                row.x,
+                row.y,
+                row.width,
+                &format!(" {status} · {description}"),
+                style,
+            );
+            rows.push((row, index));
+            let _ = id;
+        }
+    }
+    put_text(
+        b,
+        i.x,
+        i.bottom().saturating_sub(1),
+        i.width,
+        " j/k select  Enter link  Esc cancel",
+        Style::default().fg(p.overlay0).bg(p.panel_bg),
+    );
+    Some(OverlayRender {
+        area: q,
+        menu_rows: rows,
+        ..OverlayRender::default()
+    })
 }
 
 fn render_team_dashboard_overlay(
@@ -143,14 +223,79 @@ fn render_team_dashboard_overlay(
     let mut lines = Vec::new();
     if let Some(form) = &dashboard.form {
         lines.push(form.action.label().to_string());
-        lines.push("Type a value and press Enter; Esc cancels.".into());
-        lines.push(String::new());
-        for (index, (label, editor)) in form.fields.iter().enumerate() {
-            lines.push(format!(
-                "{} {label}: {}",
-                if index == form.current { ">" } else { " " },
-                editor.as_str()
-            ));
+        if matches!(
+            form.action,
+            ClientTeamDashboardAction::Task | ClientTeamDashboardAction::Check
+        ) && form.member_picker_active
+        {
+            let is_check = form.action == ClientTeamDashboardAction::Check;
+            let context = if is_check {
+                form.fields
+                    .get(1)
+                    .map(|(_, editor)| format!("Question: {}", editor.as_str()))
+                    .unwrap_or_default()
+            } else {
+                form.fields
+                    .first()
+                    .map(|(_, editor)| format!("Task: {}", editor.as_str()))
+                    .unwrap_or_default()
+            };
+            lines.push(context);
+            lines.push(if is_check {
+                "Space selects one  Enter sends check request  Esc cancels".into()
+            } else {
+                "Space selects  Enter assigns  Esc cancels".into()
+            });
+            if let Ok(snapshot) = &dashboard.snapshot {
+                let members = snapshot
+                    .teammates
+                    .iter()
+                    .filter(|member| member.active)
+                    .collect::<Vec<_>>();
+                let capacity =
+                    usize::from(content.height.saturating_sub(lines.len() as u16)).max(1);
+                let start = form
+                    .member_cursor
+                    .saturating_sub(capacity.saturating_sub(1));
+                for (index, member) in members.iter().enumerate().skip(start).take(capacity) {
+                    let selected = form
+                        .selected_member_ids
+                        .iter()
+                        .any(|id| id == &member.member_id);
+                    lines.push(format!(
+                        "{} [{}] {} ({})",
+                        if index == form.member_cursor {
+                            ">"
+                        } else {
+                            " "
+                        },
+                        if selected { "x" } else { " " },
+                        member.display_name,
+                        role_label(&member.role)
+                    ));
+                }
+                if members.is_empty() {
+                    lines.push(if is_check {
+                        "No active teammates to ask.".into()
+                    } else {
+                        "No active teammates to assign to.".into()
+                    });
+                }
+            }
+            if !dashboard.status.is_empty() {
+                lines.push(String::new());
+                lines.push(dashboard.status.clone());
+            }
+        } else {
+            lines.push("Type a value and press Enter; Esc cancels.".into());
+            lines.push(String::new());
+            for (index, (label, editor)) in form.fields.iter().enumerate() {
+                lines.push(format!(
+                    "{} {label}: {}",
+                    if index == form.current { ">" } else { " " },
+                    editor.as_str()
+                ));
+            }
         }
     } else {
         match &dashboard.snapshot {
@@ -193,9 +338,14 @@ fn render_team_dashboard_overlay(
                         if snapshot.tasks.is_empty() {
                             lines.push("No tasks recorded.".to_string());
                         } else {
-                            lines.extend(snapshot.tasks.iter().map(|task| {
+                            lines.extend(snapshot.tasks.iter().enumerate().map(|(index, task)| {
                                 format!(
-                                    "{}  {}  {} -> {}  {}",
+                                    "{}{}  {}  {} -> {}  {}",
+                                    if index == dashboard.task_cursor {
+                                        "> "
+                                    } else {
+                                        "  "
+                                    },
                                     task.task_id,
                                     task_status_label(&task.status),
                                     task.assigner_member_id,
@@ -221,15 +371,70 @@ fn render_team_dashboard_overlay(
                         if snapshot.requests.is_empty() {
                             lines.push("No requests recorded.".to_string());
                         } else {
-                            lines.extend(snapshot.requests.iter().map(|request| {
-                                format!(
-                                    "{}  {}  {} -> {}",
+                            for request in snapshot.requests.iter().rev() {
+                                lines.push(format!(
+                                    "{}  {}  {}  {} -> {}",
+                                    request.request_id,
                                     request_kind_label(&request.kind),
                                     delivery_label(&request.delivery),
                                     request.requester_member_id,
                                     request.target_member_id
-                                )
-                            }));
+                                ));
+                                if let Some(result) = request.result.as_ref() {
+                                    let profile_id = snapshot
+                                        .profile
+                                        .as_ref()
+                                        .map(|profile| profile.member_id.as_str());
+                                    if profile_id == Some(request.requester_member_id.as_str())
+                                        || profile_id == Some(request.target_member_id.as_str())
+                                    {
+                                        let preview = result
+                                            .error
+                                            .as_deref()
+                                            .filter(|error| !error.is_empty())
+                                            .unwrap_or(&result.stdout);
+                                        lines.push(format!(
+                                            "  Result ({}): {}",
+                                            result.isolation,
+                                            bounded_preview(preview, 140)
+                                        ));
+                                        if result.output_truncated {
+                                            lines.push(
+                                                "  Output was truncated by the request limit."
+                                                    .into(),
+                                            );
+                                        }
+                                    } else {
+                                        lines.push(
+                                            "  Result is visible to the requester and target."
+                                                .into(),
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    ClientTeamDashboardSection::Access => {
+                        if snapshot.permission_graph.is_empty() {
+                            lines.push("No team permission data recorded.".into());
+                            lines.push("Access inspection uses the local signed grant set.".into());
+                        } else {
+                            for row in &snapshot.permission_graph {
+                                lines.push(format!(
+                                    "{} ({}) -> {} ({}) [{}]",
+                                    row.display_name,
+                                    row.member_id,
+                                    row.action,
+                                    row.resource,
+                                    if row.allowed { "ALLOWED" } else { "DENIED" }
+                                ));
+                                let chain = if row.grant_chain.is_empty() {
+                                    "no matching grant".to_string()
+                                } else {
+                                    row.grant_chain.join(" -> ")
+                                };
+                                lines.push(format!("  {chain}; {}", row.reason));
+                            }
                         }
                     }
                 }
@@ -263,7 +468,15 @@ fn render_team_dashboard_overlay(
         i.x,
         i.bottom().saturating_sub(1),
         i.width,
-        " p profile c team i invite n join a approve t task b message r read s sync y copy",
+        if dashboard.section == ClientTeamDashboardSection::Tasks {
+            " j/k select  a accept  w work  d done  x cancel  ! attention  t assign  1-4 sections"
+        } else if dashboard.section == ClientTeamDashboardSection::Requests {
+            " q ask teammate  r local /read  s sync  5 access  Esc close"
+        } else if dashboard.section == ClientTeamDashboardSection::Access {
+            " 5 access  q ask teammate  1-4 other sections  Esc close"
+        } else {
+            " p profile c team i invite n join a approve t task b message r local read q remote check s sync y copy"
+        },
         Style::default().fg(p.overlay0).bg(p.panel_bg),
     );
     Some(OverlayRender {
@@ -314,6 +527,14 @@ fn delivery_label(delivery: &crate::team::DeliveryState) -> &'static str {
         crate::team::DeliveryState::Failed => "failed",
         crate::team::DeliveryState::Unauthorized => "unauthorized",
     }
+}
+
+fn bounded_preview(value: &str, max_chars: usize) -> String {
+    let mut preview = value.chars().take(max_chars).collect::<String>();
+    if value.chars().count() > max_chars {
+        preview.push('…');
+    }
+    preview.replace('\n', " ").replace('\r', " ")
 }
 
 pub(crate) fn render_global_menu(

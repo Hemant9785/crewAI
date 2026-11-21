@@ -59,6 +59,8 @@ pub(super) struct ClientShellLayout {
     pub tab_bar: Rect,
     pub mobile_header: Rect,
     pub pane_surface: Rect,
+    pub team_panel: Rect,
+    pub team_panel_toggle: Rect,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,6 +105,13 @@ pub(super) struct ShellHitMap {
     pub(super) sidebar_divider: Rect,
     pub(super) sidebar_section_divider: Rect,
     pub(super) sidebar_toggle: Rect,
+    pub(super) team_panel_toggle: Rect,
+    pub(super) team_panel_tasks: Rect,
+    pub(super) team_panel_tasks_max_scroll: usize,
+    pub(super) team_panel_task_links: Vec<(Rect, String, String)>,
+    pub(super) team_panel_activity: Rect,
+    pub(super) team_panel_activity_max_scroll: usize,
+    pub(super) team_panel_composer: Rect,
     pub(super) new_workspace: Rect,
     pub(super) new_tab: Rect,
     pub(super) tab_scroll_left: Rect,
@@ -115,6 +124,7 @@ pub(super) struct ShellHitMap {
     pub(super) notification_toast: Rect,
     pub(super) global_menu_rows: Vec<(Rect, usize)>,
     pub(super) context_menu_rows: Vec<(Rect, usize)>,
+    pub(super) agent_task_picker_rows: Vec<(Rect, usize)>,
     pub(super) overlay_primary: Rect,
     pub(super) overlay_clear: Rect,
     pub(super) overlay_cancel: Rect,
@@ -291,6 +301,7 @@ pub(super) enum ClientShellOverlayKind {
     ContextMenu,
     GlobalMenu,
     TeamDashboard,
+    AgentTaskPicker,
     Settings,
 }
 
@@ -388,6 +399,7 @@ pub(super) enum ClientTeamDashboardSection {
     Tasks,
     Broadcast,
     Requests,
+    Access,
 }
 
 impl ClientTeamDashboardSection {
@@ -396,6 +408,7 @@ impl ClientTeamDashboardSection {
         Self::Tasks,
         Self::Broadcast,
         Self::Requests,
+        Self::Access,
     ];
 
     pub(super) fn label(self) -> &'static str {
@@ -404,6 +417,7 @@ impl ClientTeamDashboardSection {
             Self::Tasks => "tasks",
             Self::Broadcast => "broadcast",
             Self::Requests => "requests",
+            Self::Access => "access",
         }
     }
 
@@ -418,6 +432,7 @@ impl ClientTeamDashboardSection {
 #[derive(Debug)]
 pub(super) struct ClientTeamDashboardOverlay {
     pub(super) section: ClientTeamDashboardSection,
+    pub(super) task_cursor: usize,
     pub(super) snapshot: Result<crate::team_view::TeamDashboardSnapshot, String>,
     pub(super) form: Option<ClientTeamDashboardForm>,
     pub(super) status: String,
@@ -425,6 +440,13 @@ pub(super) struct ClientTeamDashboardOverlay {
     pub(super) relay_url: Option<String>,
     pub(super) relay_token: Option<String>,
     pub(super) share_code: Option<String>,
+}
+
+#[derive(Debug)]
+pub(super) struct ClientAgentTaskPickerOverlay {
+    pub(super) pane_id: String,
+    pub(super) tasks: Vec<(String, String, String)>,
+    pub(super) highlighted: usize,
 }
 
 #[derive(Debug)]
@@ -442,8 +464,10 @@ pub(super) enum ClientTeamDashboardAction {
     Join,
     Approve,
     Task,
+    TaskStatus,
     Broadcast,
     Read,
+    Check,
 }
 
 #[derive(Debug)]
@@ -451,6 +475,9 @@ pub(super) struct ClientTeamDashboardForm {
     pub(super) action: ClientTeamDashboardAction,
     pub(super) fields: Vec<(String, super::TextEditor)>,
     pub(super) current: usize,
+    pub(super) member_picker_active: bool,
+    pub(super) member_cursor: usize,
+    pub(super) selected_member_ids: Vec<String>,
 }
 
 impl ClientTeamDashboardAction {
@@ -462,8 +489,10 @@ impl ClientTeamDashboardAction {
             Self::Join => "Join with invite code",
             Self::Approve => "Approve join request code",
             Self::Task => "Assign task",
+            Self::TaskStatus => "Update task status",
             Self::Broadcast => "Broadcast message",
             Self::Read => "Ask this device's Codex",
+            Self::Check => "Ask a teammate's repository",
         }
     }
 }
@@ -612,6 +641,8 @@ pub(super) enum ClientContextMenuAction {
     Zoom,
     ToggleRightClickPassthrough,
     ClosePane,
+    LinkTeamTask,
+    UnlinkTeamTask,
 }
 
 #[derive(Debug)]
@@ -634,6 +665,7 @@ pub(super) enum ClientContextMenuTarget {
         source_pane_id: Option<String>,
         has_manual_label: bool,
         right_click_passthrough: bool,
+        has_task_link: bool,
     },
 }
 
@@ -681,6 +713,7 @@ pub(super) enum ClientShellOverlay {
     ContextMenu(ClientContextMenuOverlay),
     GlobalMenu(ClientGlobalMenuOverlay),
     TeamDashboard(ClientTeamDashboardOverlay),
+    AgentTaskPicker(ClientAgentTaskPickerOverlay),
     Settings(ClientSettingsOverlay),
 }
 
@@ -700,6 +733,7 @@ impl ClientShellOverlay {
             Self::ContextMenu(_) => ClientShellOverlayKind::ContextMenu,
             Self::GlobalMenu(_) => ClientShellOverlayKind::GlobalMenu,
             Self::TeamDashboard(_) => ClientShellOverlayKind::TeamDashboard,
+            Self::AgentTaskPicker(_) => ClientShellOverlayKind::AgentTaskPicker,
             Self::Settings(_) => ClientShellOverlayKind::Settings,
         }
     }
@@ -962,6 +996,20 @@ pub(crate) struct ClientShellState {
     pub(super) sidebar_collapsed_manual: bool,
     pub(super) sidebar_width: u16,
     pub(super) sidebar_width_manual: bool,
+    pub(super) team_panel_collapsed: bool,
+    pub(super) team_panel_task_scroll: usize,
+    pub(super) team_panel_activity_scroll: usize,
+    /// Local-only association between a Herdr pane and a shared team task.
+    pub(super) agent_task_links: HashMap<String, String>,
+    pub(super) team_panel_snapshot: Result<crate::team_view::TeamDashboardSnapshot, String>,
+    pub(super) team_panel_refresh_pending:
+        Option<std::sync::mpsc::Receiver<Result<crate::team_view::TeamDashboardSnapshot, String>>>,
+    pub(super) team_panel_send_pending: Option<std::sync::mpsc::Receiver<Result<(), String>>>,
+    pub(super) team_panel_next_refresh: std::time::Instant,
+    pub(super) team_panel_composer: super::TextEditor,
+    pub(super) team_panel_composer_focused: bool,
+    pub(super) team_panel_status: Option<String>,
+    pub(super) relay_credential_sink: Option<crate::client::team_relay_sync::RelayCredentialSink>,
     pub(super) sidebar_section_split: f32,
     pub(super) sidebar_section_split_manual: bool,
     pub(super) agent_panel_sort_manual: bool,
@@ -1136,6 +1184,18 @@ impl ClientShellState {
             sidebar_collapsed_manual: preferences.sidebar_collapsed.is_some(),
             sidebar_width,
             sidebar_width_manual: preferences.sidebar_width.is_some(),
+            team_panel_collapsed: false,
+            team_panel_task_scroll: 0,
+            team_panel_activity_scroll: 0,
+            agent_task_links: HashMap::new(),
+            team_panel_snapshot: Err("Team data is loading".into()),
+            team_panel_refresh_pending: None,
+            team_panel_send_pending: None,
+            team_panel_next_refresh: std::time::Instant::now(),
+            team_panel_composer: super::TextEditor::default(),
+            team_panel_composer_focused: false,
+            team_panel_status: None,
+            relay_credential_sink: None,
             sidebar_section_split,
             sidebar_section_split_manual: preferences.sidebar_section_split.is_some(),
             agent_panel_sort_manual: preferences.agent_panel_sort.is_some(),
@@ -1314,6 +1374,7 @@ impl ClientShellState {
             self.sidebar_collapsed,
             self.focused_tab_count(),
             self.sidebar_width,
+            !self.team_panel_collapsed,
         )
     }
 

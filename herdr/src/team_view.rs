@@ -4,7 +4,10 @@
 //! It never creates or migrates a database, never loads device private keys,
 //! and caps every collection before it is handed to a renderer.
 
-use crate::team::{BroadcastRecord, Member, RequestRecord, TaskRecord, Team};
+use crate::team::{
+    BroadcastRecord, Member, OutboxRecord, PermissionAction, PermissionResource, RequestRecord,
+    TaskActivityRecord, TaskRecord, TaskStatus, Team,
+};
 use crate::team_storage::{StorageError, TeamStore};
 use std::env;
 use std::path::{Path, PathBuf};
@@ -31,7 +34,62 @@ pub(crate) struct TeamDashboardSnapshot {
     pub teammates: Vec<Member>,
     pub tasks: Vec<TaskRecord>,
     pub broadcasts: Vec<BroadcastRecord>,
+    pub completion_announcements: Vec<TaskCompletionAnnouncement>,
+    pub delivery: DeliverySummary,
     pub requests: Vec<RequestRecord>,
+    pub permission_graph: Vec<PermissionGraphRow>,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct DeliverySummary {
+    pub queued: usize,
+    pub retryable: usize,
+    pub syncing: usize,
+    pub delivered: usize,
+    pub failed: usize,
+}
+
+impl DeliverySummary {
+    fn from_outbox(records: &[OutboxRecord]) -> Self {
+        let mut summary = Self::default();
+        for record in records {
+            match record.state {
+                crate::team::OutboxState::Queued => {
+                    summary.queued += 1;
+                    summary.retryable += usize::from(record.attempts > 0);
+                }
+                crate::team::OutboxState::InFlight => summary.syncing += 1,
+                crate::team::OutboxState::Delivered => summary.delivered += 1,
+                crate::team::OutboxState::Failed => summary.failed += 1,
+                crate::team::OutboxState::Cancelled => {}
+            }
+        }
+        summary
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct PermissionGraphRow {
+    pub member_id: String,
+    pub display_name: String,
+    pub role: crate::team::Role,
+    pub resource: String,
+    pub action: String,
+    pub active: bool,
+    pub allowed: bool,
+    pub reason: String,
+    pub grant_chain: Vec<String>,
+}
+
+/// A shared activity item derived from an accepted, signed task status event.
+/// It is projected from task history instead of creating a second broadcast
+/// event, so relay replays cannot duplicate the announcement.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct TaskCompletionAnnouncement {
+    pub task_id: String,
+    pub description: String,
+    pub completed_by_member_id: String,
+    pub completed_at: u64,
 }
 
 impl TeamDashboardSnapshot {
@@ -43,7 +101,10 @@ impl TeamDashboardSnapshot {
             teammates: Vec::new(),
             tasks: Vec::new(),
             broadcasts: Vec::new(),
+            completion_announcements: Vec::new(),
+            delivery: DeliverySummary::default(),
             requests: Vec::new(),
+            permission_graph: Vec::new(),
         }
     }
 
@@ -52,6 +113,7 @@ impl TeamDashboardSnapshot {
             && self.teammates.is_empty()
             && self.tasks.is_empty()
             && self.broadcasts.is_empty()
+            && self.completion_announcements.is_empty()
             && self.requests.is_empty()
     }
 }
@@ -71,7 +133,11 @@ impl std::fmt::Display for TeamDashboardError {
                 "{TEAM_DB_ENV} is not set; run `herdr onboard setup` and point it at the team database"
             ),
             Self::MissingDatabase(path) => {
-                write!(formatter, "team database does not exist: {}", path.display())
+                write!(
+                    formatter,
+                    "team database does not exist: {}",
+                    path.display()
+                )
             }
             Self::Storage(error) => write!(formatter, "team dashboard storage error: {error}"),
         }
@@ -122,15 +188,18 @@ pub(crate) fn load_from_path(
         }
     }
     let teammates = bounded(teammates);
-    let tasks = bounded(store.tasks()?);
-    let broadcasts = bounded(store.broadcasts(None)?);
+    let tasks = bounded_latest(store.tasks()?);
+    let broadcasts = bounded_latest(store.broadcasts(None)?);
+    let completion_announcements = load_completion_announcements(&store, &tasks)?;
     let requests = bounded(store.requests()?);
+    let delivery = DeliverySummary::from_outbox(&store.outbox()?);
     let teams = store.teams()?;
     let repositories = store
         .repository_approvals()?
         .into_iter()
         .map(|approval| approval.repository_id)
-        .collect();
+        .collect::<Vec<_>>();
+    let permission_graph = load_permission_graph(&store, &teams, &teammates, &repositories)?;
     Ok(TeamDashboardSnapshot {
         profile,
         teams,
@@ -138,12 +207,135 @@ pub(crate) fn load_from_path(
         teammates,
         tasks,
         broadcasts,
+        completion_announcements,
+        delivery,
         requests,
+        permission_graph,
+    })
+}
+
+fn load_permission_graph(
+    store: &TeamStore,
+    teams: &[Team],
+    teammates: &[Member],
+    repositories: &[String],
+) -> Result<Vec<PermissionGraphRow>, StorageError> {
+    let Some(team) = teams.first() else {
+        return Ok(Vec::new());
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or(0);
+    let mut rows = Vec::new();
+    for member in teammates {
+        if rows.len() >= MAX_DASHBOARD_ROWS {
+            break;
+        }
+        let task_decision = store.permission_decision(
+            &team.team_id,
+            &member.member_id,
+            &PermissionResource::Team(team.team_id.clone()),
+            &PermissionAction::CreateTask,
+            now,
+        )?;
+        rows.push(PermissionGraphRow {
+            member_id: member.member_id.clone(),
+            display_name: member.display_name.clone(),
+            role: member.role.clone(),
+            resource: format!("team {}", team.name),
+            action: "assign tasks".into(),
+            active: member.active,
+            allowed: member.active && task_decision.allowed,
+            reason: if member.active {
+                format!("{:?}", task_decision.reason)
+            } else {
+                "InactiveMember".into()
+            },
+            grant_chain: task_decision.chain,
+        });
+        for repository in repositories {
+            if rows.len() >= MAX_DASHBOARD_ROWS {
+                break;
+            }
+            let decision = store.permission_decision(
+                &team.team_id,
+                &member.member_id,
+                &PermissionResource::Repository(repository.clone()),
+                &PermissionAction::ReadRepository,
+                now,
+            )?;
+            rows.push(PermissionGraphRow {
+                member_id: member.member_id.clone(),
+                display_name: member.display_name.clone(),
+                role: member.role.clone(),
+                resource: format!("repository {repository}"),
+                action: "read repository".into(),
+                active: member.active,
+                allowed: member.active && decision.allowed,
+                reason: if member.active {
+                    format!("{:?}", decision.reason)
+                } else {
+                    "InactiveMember".into()
+                },
+                grant_chain: decision.chain,
+            });
+        }
+    }
+    Ok(rows)
+}
+
+fn load_completion_announcements(
+    store: &TeamStore,
+    tasks: &[TaskRecord],
+) -> Result<Vec<TaskCompletionAnnouncement>, StorageError> {
+    let mut announcements = Vec::new();
+    for task in tasks.iter().filter(|task| task.status == TaskStatus::Done) {
+        let activity = store.task_activity(&task.task_id)?;
+        if let Some(announcement) = completion_announcement(task, &activity) {
+            announcements.push(announcement);
+        }
+    }
+    announcements.sort_by(|left, right| {
+        left.completed_at
+            .cmp(&right.completed_at)
+            .then_with(|| left.task_id.cmp(&right.task_id))
+    });
+    Ok(bounded_latest(announcements))
+}
+
+fn completion_announcement(
+    task: &TaskRecord,
+    activity: &[TaskActivityRecord],
+) -> Option<TaskCompletionAnnouncement> {
+    if task.status != TaskStatus::Done {
+        return None;
+    }
+    let completed = activity
+        .iter()
+        .filter(|item| item.status.as_ref() == Some(&TaskStatus::Done))
+        .max_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.activity_id.cmp(&right.activity_id))
+        })?;
+    Some(TaskCompletionAnnouncement {
+        task_id: task.task_id.clone(),
+        description: task.description.clone(),
+        completed_by_member_id: completed.actor_member_id.clone(),
+        completed_at: completed.created_at,
     })
 }
 
 fn bounded<T>(mut values: Vec<T>) -> Vec<T> {
     values.truncate(MAX_DASHBOARD_ROWS);
+    values
+}
+
+fn bounded_latest<T>(mut values: Vec<T>) -> Vec<T> {
+    if values.len() > MAX_DASHBOARD_ROWS {
+        values.drain(..values.len() - MAX_DASHBOARD_ROWS);
+    }
     values
 }
 
@@ -190,5 +382,130 @@ mod tests {
         let snapshot = TeamDashboardSnapshot::empty();
         assert!(snapshot.is_empty());
         assert_eq!(MAX_DASHBOARD_ROWS, 100);
+    }
+
+    #[test]
+    fn delivery_summary_uses_persisted_outbox_states() {
+        let outbox = vec![
+            OutboxRecord {
+                event_id: "queued".into(),
+                attempts: 0,
+                next_attempt_at: None,
+                state: crate::team::OutboxState::Queued,
+            },
+            OutboxRecord {
+                event_id: "retryable".into(),
+                attempts: 2,
+                next_attempt_at: Some(20),
+                state: crate::team::OutboxState::Queued,
+            },
+            OutboxRecord {
+                event_id: "syncing".into(),
+                attempts: 1,
+                next_attempt_at: None,
+                state: crate::team::OutboxState::InFlight,
+            },
+            OutboxRecord {
+                event_id: "delivered".into(),
+                attempts: 1,
+                next_attempt_at: None,
+                state: crate::team::OutboxState::Delivered,
+            },
+            OutboxRecord {
+                event_id: "failed".into(),
+                attempts: 5,
+                next_attempt_at: None,
+                state: crate::team::OutboxState::Failed,
+            },
+        ];
+        assert_eq!(
+            DeliverySummary::from_outbox(&outbox),
+            DeliverySummary {
+                queued: 2,
+                retryable: 1,
+                syncing: 1,
+                delivered: 1,
+                failed: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn completion_announcement_is_derived_once_from_done_task_history() {
+        let task = TaskRecord {
+            task_id: "task-1".into(),
+            assigner_member_id: "manager".into(),
+            assignee_member_id: "implementer".into(),
+            description: "Implement the page".into(),
+            status: TaskStatus::Done,
+            created_at: 10,
+        };
+        let activity = vec![
+            TaskActivityRecord {
+                activity_id: "created-event".into(),
+                task_id: task.task_id.clone(),
+                actor_member_id: "manager".into(),
+                activity_type: "created".into(),
+                message: task.description.clone(),
+                status: Some(TaskStatus::Queued),
+                created_at: 10,
+            },
+            TaskActivityRecord {
+                activity_id: "done-event".into(),
+                task_id: task.task_id.clone(),
+                actor_member_id: "implementer".into(),
+                activity_type: "status_changed".into(),
+                message: "status changed to Done".into(),
+                status: Some(TaskStatus::Done),
+                created_at: 20,
+            },
+            // Duplicate activity input still produces one derived feed item.
+            TaskActivityRecord {
+                activity_id: "done-event".into(),
+                task_id: task.task_id.clone(),
+                actor_member_id: "implementer".into(),
+                activity_type: "status_changed".into(),
+                message: "status changed to Done".into(),
+                status: Some(TaskStatus::Done),
+                created_at: 20,
+            },
+        ];
+
+        let announcements = vec![completion_announcement(&task, &activity).unwrap()];
+        assert_eq!(announcements.len(), 1);
+        assert_eq!(announcements[0].completed_by_member_id, "implementer");
+        assert_eq!(announcements[0].description, "Implement the page");
+        assert_eq!(announcements[0].completed_at, 20);
+    }
+
+    #[test]
+    fn incomplete_task_never_creates_completion_announcement() {
+        let task = TaskRecord {
+            task_id: "task-1".into(),
+            assigner_member_id: "manager".into(),
+            assignee_member_id: "implementer".into(),
+            description: "Implement the page".into(),
+            status: TaskStatus::InProgress,
+            created_at: 10,
+        };
+        let activity = vec![TaskActivityRecord {
+            activity_id: "progress-event".into(),
+            task_id: task.task_id.clone(),
+            actor_member_id: "implementer".into(),
+            activity_type: "status_changed".into(),
+            message: "status changed to InProgress".into(),
+            status: Some(TaskStatus::InProgress),
+            created_at: 20,
+        }];
+        assert!(completion_announcement(&task, &activity).is_none());
+    }
+
+    #[test]
+    fn bounded_latest_retains_the_newest_records_in_chronological_order() {
+        assert_eq!(bounded_latest(vec![1, 2, 3, 4]), vec![1, 2, 3, 4]);
+        assert_eq!(
+            bounded_latest((0..105).collect::<Vec<_>>()),
+            (5..105).collect::<Vec<_>>()
+        );
     }
 }

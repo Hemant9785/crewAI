@@ -63,6 +63,12 @@ impl ClientShellState {
             remote_collapsed_groups: &self.remote_collapsed_groups,
             workspace_scroll: &mut self.workspace_scroll,
             agent_scroll: &mut self.agent_scroll,
+            agent_task_links: &self.agent_task_links,
+            team_tasks: self
+                .team_panel_snapshot
+                .as_ref()
+                .map(|snapshot| snapshot.tasks.as_slice())
+                .unwrap_or_default(),
             tab_scroll: &mut self.tab_scroll,
             reveal_focused_workspace: &mut self.reveal_focused_workspace,
             reveal_focused_tab: &mut self.reveal_focused_tab,
@@ -219,6 +225,12 @@ impl ClientShellState {
                 remote_collapsed_groups: &self.remote_collapsed_groups,
                 workspace_scroll: &mut self.workspace_scroll,
                 agent_scroll: &mut self.agent_scroll,
+                agent_task_links: &self.agent_task_links,
+                team_tasks: self
+                    .team_panel_snapshot
+                    .as_ref()
+                    .map(|snapshot| snapshot.tasks.as_slice())
+                    .unwrap_or_default(),
                 tab_scroll: &mut self.tab_scroll,
                 reveal_focused_workspace: &mut self.reveal_focused_workspace,
                 reveal_focused_tab: &mut self.reveal_focused_tab,
@@ -234,6 +246,26 @@ impl ClientShellState {
                 dragged_workspace_id,
                 workspace_drop_indicator_row,
             },
+        );
+        self.hits.team_panel_toggle = layout.team_panel_toggle;
+        super::team_panel::render_toggle(
+            &mut buffer,
+            layout.team_panel_toggle,
+            !self.team_panel_collapsed,
+            &self.config,
+        );
+        super::team_panel::render_team_panel(
+            &mut buffer,
+            layout.team_panel,
+            &self.team_panel_snapshot,
+            &mut self.team_panel_task_scroll,
+            &mut self.team_panel_activity_scroll,
+            self.team_panel_composer.as_str(),
+            self.team_panel_composer_focused,
+            self.team_panel_status.as_deref(),
+            &self.agent_task_links,
+            &self.config,
+            &mut self.hits,
         );
         self.hits.panes = surface
             .panes
@@ -660,6 +692,19 @@ impl ClientShellState {
                 )?;
                 occlusion.cover(rendered.area);
                 self.hits.global_menu_rows = rendered.menu_rows;
+                None
+            } else if matches!(overlay, ClientShellOverlay::AgentTaskPicker(_)) {
+                let rendered = render::render_client_overlay(
+                    &mut composed,
+                    overlay,
+                    snapshot,
+                    &self.endpoints,
+                    &self.active_endpoint_id,
+                    &self.config.keybinds,
+                    &self.config.palette,
+                )?;
+                occlusion.cover(rendered.area);
+                self.hits.agent_task_picker_rows = rendered.menu_rows;
                 None
             } else {
                 let rendered = render::render_client_overlay(

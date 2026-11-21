@@ -35,6 +35,7 @@ mod shell;
 mod shell_runtime;
 mod startup;
 mod state;
+mod team_relay_sync;
 mod terminal_geometry;
 mod terminal_sessions;
 mod terminal_setup;
@@ -357,6 +358,15 @@ fn run_client_with_mode(
         warn!(%err, "failed to install termination handler; terminal restore relies on TerminalGuard::Drop and the panic hook");
     }
 
+    let background_relay_sync = if client_rendered_shell && !is_remote_client_process() {
+        team_relay_sync::BackgroundRelaySync::start()
+    } else {
+        None
+    };
+    let relay_credential_sink = background_relay_sync
+        .as_ref()
+        .map(team_relay_sync::BackgroundRelaySync::credential_sink);
+
     let result = rt.block_on(async {
         run_client_loop(
             initial,
@@ -369,6 +379,7 @@ fn run_client_with_mode(
             should_quit,
             loop_config,
             attach_escape,
+            relay_credential_sink,
             &terminal_guard,
         )
         .await
@@ -376,6 +387,7 @@ fn run_client_with_mode(
 
     // Restore the terminal before printing any final status message.
     let terminal_restore_failed = terminal_guard.restore().is_err();
+    drop(background_relay_sync);
 
     if let Err(err) = result {
         let _ = writeln!(io::stderr(), "herdr: {err}");
@@ -445,6 +457,7 @@ async fn run_client_loop(
     should_quit: Arc<AtomicBool>,
     mut config: ClientLoopConfig,
     attach_escape: Option<AttachEscapeState>,
+    relay_credential_sink: Option<team_relay_sync::RelayCredentialSink>,
     _terminal_guard: &TerminalGuard,
 ) -> Result<(), ClientError> {
     #[cfg(windows)]
@@ -491,7 +504,13 @@ async fn run_client_loop(
         deferred_local_activation: None,
         draw_host_cursor,
         detached_process_children: Vec::new(),
-        shell: config.shell_config.map(shell::ClientShellState::new),
+        shell: config.shell_config.map(|config| {
+            let mut shell = shell::ClientShellState::new(config);
+            if let Some(credential_sink) = relay_credential_sink.clone() {
+                shell.set_relay_credential_sink(credential_sink);
+            }
+            shell
+        }),
     };
     let mut federated = endpoint_catalog.has_enabled_ssh();
     if let Some(shell) = state.shell.as_mut() {
@@ -2334,6 +2353,7 @@ async fn run_client_loop(
                         let shell = state.shell.as_mut().expect("checked shell mode");
                         let mut outcome = shell.tick_selection_autoscroll(now);
                         outcome.repaint |= shell.tick_team_dashboard();
+                        outcome.repaint |= shell.tick_team_panel(now);
                         for expired in expired_endpoints {
                             if !shell.endpoint_is_active(&expired.endpoint_id) {
                                 continue;

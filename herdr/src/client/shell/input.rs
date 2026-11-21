@@ -639,6 +639,56 @@ impl ClientShellState {
             self.route_overlay_key(key, outcome);
             return None;
         }
+        if self.team_panel_composer_focused {
+            if key.code == KeyCode::F(6) {
+                self.toggle_team_panel(outcome);
+                return None;
+            }
+            match key.code {
+                KeyCode::Esc => {
+                    self.team_panel_composer_focused = false;
+                    self.team_panel_status = None;
+                }
+                KeyCode::Enter => self.send_team_panel_broadcast(),
+                _ => {
+                    self.team_panel_composer.handle_key(key);
+                }
+            }
+            outcome.repaint = true;
+            return None;
+        }
+        if !self.team_panel_collapsed {
+            match (key.code, key.modifiers) {
+                (KeyCode::PageUp, KeyModifiers::CONTROL) => {
+                    self.team_panel_task_scroll = self
+                        .team_panel_task_scroll
+                        .saturating_add(1)
+                        .min(self.hits.team_panel_tasks_max_scroll);
+                    outcome.repaint = true;
+                    return None;
+                }
+                (KeyCode::PageDown, KeyModifiers::CONTROL) => {
+                    self.team_panel_task_scroll = self.team_panel_task_scroll.saturating_sub(1);
+                    outcome.repaint = true;
+                    return None;
+                }
+                (KeyCode::PageUp, KeyModifiers::ALT) => {
+                    self.team_panel_activity_scroll = self
+                        .team_panel_activity_scroll
+                        .saturating_add(1)
+                        .min(self.hits.team_panel_activity_max_scroll);
+                    outcome.repaint = true;
+                    return None;
+                }
+                (KeyCode::PageDown, KeyModifiers::ALT) => {
+                    self.team_panel_activity_scroll =
+                        self.team_panel_activity_scroll.saturating_sub(1);
+                    outcome.repaint = true;
+                    return None;
+                }
+                _ => {}
+            }
+        }
         if matches!(key.code, KeyCode::Modifier(_)) {
             return None;
         }
@@ -674,6 +724,10 @@ impl ClientShellState {
                     crate::input::resolve_direct_binding(&self.config.keybinds.keybinds, key)
                 {
                     self.record_binding(binding, outcome);
+                    return None;
+                }
+                if key.code == KeyCode::F(6) {
+                    self.toggle_team_panel(outcome);
                     return None;
                 }
                 if self.config.keybinds.matches_prefix(key) {

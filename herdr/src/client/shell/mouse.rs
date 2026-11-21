@@ -1442,6 +1442,34 @@ impl ClientShellState {
             }
             return;
         }
+        if matches!(self.overlay, Some(ClientShellOverlay::AgentTaskPicker(_))) {
+            let row_hit = self
+                .hits
+                .agent_task_picker_rows
+                .iter()
+                .find(|(rect, _)| super::contains(*rect, point))
+                .copied();
+            match mouse.kind {
+                MouseEventKind::Moved => {
+                    if let (Some((_, index)), Some(ClientShellOverlay::AgentTaskPicker(picker))) =
+                        (row_hit, self.overlay.as_mut())
+                    {
+                        picker.highlighted = index;
+                        outcome.repaint = true;
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if let Some((_, index)) = row_hit {
+                        self.activate_agent_task_picker(index);
+                    } else {
+                        self.overlay = None;
+                    }
+                    outcome.repaint = true;
+                }
+                _ => {}
+            }
+            return;
+        }
         if matches!(
             self.overlay,
             Some(
@@ -1865,6 +1893,40 @@ impl ClientShellState {
                     outcome.repaint = true;
                 }
             }
+            MouseEventKind::ScrollUp if super::contains(self.hits.team_panel_tasks, point) => {
+                let next = self
+                    .team_panel_task_scroll
+                    .saturating_add(1)
+                    .min(self.hits.team_panel_tasks_max_scroll);
+                if next != self.team_panel_task_scroll {
+                    self.team_panel_task_scroll = next;
+                    outcome.repaint = true;
+                }
+            }
+            MouseEventKind::ScrollDown if super::contains(self.hits.team_panel_tasks, point) => {
+                let next = self.team_panel_task_scroll.saturating_sub(1);
+                if next != self.team_panel_task_scroll {
+                    self.team_panel_task_scroll = next;
+                    outcome.repaint = true;
+                }
+            }
+            MouseEventKind::ScrollUp if super::contains(self.hits.team_panel_activity, point) => {
+                let next = self
+                    .team_panel_activity_scroll
+                    .saturating_add(1)
+                    .min(self.hits.team_panel_activity_max_scroll);
+                if next != self.team_panel_activity_scroll {
+                    self.team_panel_activity_scroll = next;
+                    outcome.repaint = true;
+                }
+            }
+            MouseEventKind::ScrollDown if super::contains(self.hits.team_panel_activity, point) => {
+                let next = self.team_panel_activity_scroll.saturating_sub(1);
+                if next != self.team_panel_activity_scroll {
+                    self.team_panel_activity_scroll = next;
+                    outcome.repaint = true;
+                }
+            }
             MouseEventKind::ScrollUp
                 if self
                     .hits
@@ -1930,6 +1992,21 @@ impl ClientShellState {
                 }
             }
             MouseEventKind::Down(MouseButton::Left) => {
+                if let Some((_, _, pane_id)) = self
+                    .hits
+                    .team_panel_task_links
+                    .iter()
+                    .find(|(rect, _, _)| super::contains(*rect, point))
+                {
+                    self.push_endpoint_method(
+                        crate::api::schema::Method::PaneFocus(crate::api::schema::PaneTarget {
+                            pane_id: pane_id.clone(),
+                        }),
+                        outcome,
+                    );
+                    outcome.repaint = true;
+                    return;
+                }
                 if self.selection.take().is_some() {
                     outcome.repaint = true;
                 }
@@ -1940,6 +2017,21 @@ impl ClientShellState {
                 self.workspace_press = None;
                 self.tab_press = None;
                 self.chrome_drag = None;
+                if self.team_panel_composer_focused
+                    && !super::contains(self.hits.team_panel_composer, point)
+                {
+                    self.team_panel_composer_focused = false;
+                }
+                if super::contains(self.hits.team_panel_toggle, point) {
+                    self.toggle_team_panel(outcome);
+                    return;
+                }
+                if super::contains(self.hits.team_panel_composer, point) {
+                    self.team_panel_composer_focused = true;
+                    self.team_panel_status = None;
+                    outcome.repaint = true;
+                    return;
+                }
                 // The toggle is painted over the agent scrollbar's last cell.
                 if super::contains(self.hits.sidebar_toggle, point) {
                     self.sidebar_collapsed = !self.sidebar_collapsed;

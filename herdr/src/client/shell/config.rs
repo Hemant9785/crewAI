@@ -389,6 +389,7 @@ impl ClientShellConfig {
         sidebar_collapsed: bool,
         tab_count: usize,
         sidebar_width: u16,
+        team_panel_open: bool,
     ) -> ClientShellLayout {
         if cols <= self.mobile_width_threshold {
             let header_height = rows.min(2);
@@ -397,6 +398,8 @@ impl ClientShellConfig {
                 tab_bar: Rect::default(),
                 mobile_header: Rect::new(0, 0, cols, header_height),
                 pane_surface: Rect::new(0, header_height, cols, rows.saturating_sub(header_height)),
+                team_panel: Rect::default(),
+                team_panel_toggle: Rect::default(),
             };
         }
 
@@ -438,12 +441,40 @@ impl ClientShellConfig {
             ),
         };
 
-        ClientShellLayout {
+        let mut layout = ClientShellLayout {
             sidebar: Rect::new(0, 0, sidebar_width, rows),
             tab_bar,
             mobile_header: Rect::default(),
             pane_surface,
+            team_panel: Rect::default(),
+            team_panel_toggle: Rect::default(),
+        };
+        const TEAM_PANEL_WIDTH: u16 = 32;
+        const MIN_TERMINAL_WIDTH: u16 = 72;
+        const TEAM_TOGGLE_WIDTH: u16 = 8;
+        let available = layout.pane_surface.width;
+        if available >= TEAM_PANEL_WIDTH + MIN_TERMINAL_WIDTH + TEAM_TOGGLE_WIDTH {
+            if !layout.tab_bar.is_empty() {
+                layout.team_panel_toggle = Rect::new(
+                    layout.tab_bar.right().saturating_sub(TEAM_TOGGLE_WIDTH),
+                    layout.tab_bar.y,
+                    TEAM_TOGGLE_WIDTH,
+                    layout.tab_bar.height,
+                );
+                layout.tab_bar.width = layout.tab_bar.width.saturating_sub(TEAM_TOGGLE_WIDTH);
+            }
+            if team_panel_open {
+                let original = layout.pane_surface;
+                layout.pane_surface.width = original.width.saturating_sub(TEAM_PANEL_WIDTH);
+                layout.team_panel = Rect::new(
+                    layout.pane_surface.right(),
+                    original.y,
+                    TEAM_PANEL_WIDTH,
+                    original.height,
+                );
+            }
         }
+        layout
     }
 
     pub(crate) fn initial_surface_size(&self, cols: u16, rows: u16) -> ClientSurfaceSize {
@@ -460,7 +491,7 @@ impl ClientShellConfig {
             .unwrap_or(self.sidebar_width)
             .clamp(min_width, max_width);
         let surface = self
-            .layout(cols, rows, sidebar_collapsed, 0, sidebar_width)
+            .layout(cols, rows, sidebar_collapsed, 0, sidebar_width, true)
             .pane_surface;
         ClientSurfaceSize {
             cols: surface.width.max(1),

@@ -15,6 +15,7 @@ pub(super) struct AgentRow {
     pub(super) status: crate::api::schema::AgentStatus,
     pub(super) focused: bool,
     pub(super) rows: Vec<Vec<crate::ui::ResolvedToken>>,
+    pub(super) linked_task: Option<String>,
 }
 
 pub(super) fn ordered_agent_pane_ids(
@@ -55,6 +56,8 @@ pub(super) fn render_agent_panel(
     snapshot: &ClientShellSnapshot,
     config: &ClientShellConfig,
     agent_scroll: &mut usize,
+    pane_task_links: &HashMap<String, String>,
+    team_tasks: &[crate::team::TaskRecord],
     hits: &mut ShellHitMap,
 ) {
     if !render_agent_panel_header(
@@ -67,7 +70,19 @@ pub(super) fn render_agent_panel(
         return;
     }
 
-    let rows = agent_rows(snapshot, config, None);
+    let mut rows = agent_rows(snapshot, config, None);
+    for row in &mut rows {
+        row.linked_task = pane_task_links
+            .get(&row.pane_id)
+            .and_then(|task_id| team_tasks.iter().find(|task| &task.task_id == task_id))
+            .map(|task| {
+                format!(
+                    "Working on: {} · {}",
+                    task.description,
+                    super::team_panel::task_status(&task.status)
+                )
+            });
+    }
     render_agent_list(
         buffer,
         area,
@@ -79,7 +94,7 @@ pub(super) fn render_agent_panel(
         config,
         agent_scroll,
         hits,
-        |row| row.rows.len(),
+        |row| row.rows.len() + usize::from(row.linked_task.is_some()),
         |buffer, rect, row, hits| {
             hits.agents.push((rect, row.pane_id.clone()));
             render_agent_row(buffer, rect, row, config);
@@ -315,6 +330,7 @@ pub(super) fn agent_row(
         status: agent.agent_status,
         focused: agent.focused,
         rows,
+        linked_task: None,
     })
 }
 
@@ -370,6 +386,23 @@ pub(super) fn render_agent_row(
             Rect::new(rect.x, rect.y + index as u16, rect.width, 1),
             buffer,
         );
+    }
+    if let Some(task) = &row.linked_task {
+        let y = rect.y.saturating_add(rows.len() as u16);
+        if y < rect.bottom() {
+            put_text(
+                buffer,
+                rect.x.saturating_add(3),
+                y,
+                rect.width.saturating_sub(3),
+                task,
+                Style::default().fg(palette.accent).bg(if row.focused {
+                    palette.active_row_bg
+                } else {
+                    palette.panel_bg
+                }),
+            );
+        }
     }
 }
 
