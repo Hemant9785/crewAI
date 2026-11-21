@@ -78,6 +78,18 @@ jobs:
           cp "herdr/target/$TARGET/release/herdr" "$stage/herdr"
           cp herdr/LICENSE "$stage/LICENSE"
           strings "$stage/herdr" | grep -F "$GITHUB_REF_NAME"
+          smoke="$RUNNER_TEMP/team-herdr-profile-smoke"
+          mkdir -p "$smoke/repository"
+          "$stage/herdr" onboard setup \
+            --db "$smoke/team.sqlite" \
+            --identity "$smoke/team.identity.json" \
+            --member release-smoke \
+            --display-name "Release smoke" \
+            --role manager \
+            --repository-id smoke \
+            --repository-path "$smoke/repository"
+          test "$(stat -c '%a' "$smoke/team.identity.json")" = "600"
+          test -f "$smoke/team.sqlite"
           tar -C "$stage" -czf "$ASSET" herdr LICENSE
           file "$ASSET"
 

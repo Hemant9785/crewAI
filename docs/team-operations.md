@@ -18,7 +18,7 @@ Team data and identity paths are explicit rather than hidden:
 | --- | --- | --- |
 | Team SQLite database | `herdr ... --db PATH` | Team records, signed event log, projections, requests, and outbox metadata |
 | Dashboard database | `HERDR_TEAM_DB` | The database read by the local read-only dashboard |
-| Device identity | `herdr ... --identity PATH` | Device ID, public key, and an OS-protected encrypted private-key blob |
+| Device identity | `herdr ... --identity PATH` | Device ID, public key, and a local private signing key |
 | Herdr configuration | `%APPDATA%\herdr\config.toml` on Windows release builds, or `HERDR_CONFIG` when set | Herdr terminal configuration |
 | Herdr logs | `%APPDATA%\herdr\herdr.log` plus client/server logs on Windows release builds | Operational diagnostics, subject to Herdr's rotating log policy |
 
@@ -27,6 +27,11 @@ and `XDG_STATE_HOME` are honored on platforms that use them; the current
 logging implementation derives its session data directory from the config
 directory. The team database and identity file can be placed on the owner's
 chosen disk, including E:, by passing paths there.
+
+Windows encrypts the private key with DPAPI. Linux stores it in the local
+identity file with mode `0600` and creates a new identity directory with mode
+`0700`; this Linux fallback is not encrypted at rest, so protect the account
+and its backups.
 
 The private key never leaves its device. Do not copy identity files between
 devices or put them in source control. Display names and role labels are not

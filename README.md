@@ -239,6 +239,9 @@ Object. The Internet setup and command walkthrough is in
 
 - Team records, identities, and databases should stay on the device that owns
   them; never commit identity files, databases, or private keys.
+- Windows protects the signing key with DPAPI. Linux stores the identity file
+  with owner-only permissions, but the key is not encrypted at rest; protect
+  the EC2 account and its backups.
 - The dashboard is a bounded local view and does not display private keys or
   repository contents. Signed membership and event checks remain in the
   existing team command layer.

@@ -1,9 +1,10 @@
 //! Local device identity and protected signing-key storage.
 //!
-//! The private Ed25519 key is encrypted with the operating system's protected
-//! storage before it is written to disk. Only the public key, derived device
-//! ID, and encrypted private-key blob are persisted. This module deliberately
-//! does not log key material or expose the private key to callers.
+//! Windows protects the private Ed25519 key with DPAPI. Linux stores it in the
+//! local identity file with owner-only permissions (0600); this Linux fallback
+//! is not encrypted at rest. Only the public key, derived device ID, and
+//! protected or owner-only private-key bytes are persisted. This module does
+//! not log key material or expose the private key to callers.
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
@@ -211,14 +212,25 @@ fn write_new_file(path: &Path, persisted: &PersistedIdentity) -> Result<(), Iden
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
     {
+        #[cfg(unix)]
+        let parent_was_missing = !parent.exists();
         fs::create_dir_all(parent)?;
+        #[cfg(unix)]
+        if parent_was_missing {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
+        }
     }
     let serialized = serde_json::to_vec_pretty(persisted)?;
     let temp_path = path.with_extension(format!("identity-{}.tmp", std::process::id()));
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&temp_path)?;
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let mut file = options.open(&temp_path)?;
     file.write_all(&serialized)?;
     file.sync_all()?;
     drop(file);
@@ -270,7 +282,12 @@ fn protect_key(data: &[u8; 32]) -> Result<Vec<u8>, IdentityError> {
     Ok(protected)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn protect_key(data: &[u8; 32]) -> Result<Vec<u8>, IdentityError> {
+    Ok(data.to_vec())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn protect_key(_data: &[u8; 32]) -> Result<Vec<u8>, IdentityError> {
     Err(IdentityError::ProtectedStorage(
         "this platform has no implemented protected-key backend".into(),
@@ -318,7 +335,17 @@ fn unprotect_key(data: &[u8]) -> Result<Vec<u8>, IdentityError> {
     Ok(unprotected)
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+fn unprotect_key(data: &[u8]) -> Result<Vec<u8>, IdentityError> {
+    if data.len() != 32 {
+        return Err(IdentityError::InvalidKey(
+            "private key must contain 32 bytes",
+        ));
+    }
+    Ok(data.to_vec())
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
 fn unprotect_key(_data: &[u8]) -> Result<Vec<u8>, IdentityError> {
     Err(IdentityError::ProtectedStorage(
         "this platform has no implemented protected-key backend".into(),
@@ -359,6 +386,7 @@ mod tests {
         let _ = fs::remove_file(path);
     }
 
+    #[cfg(windows)]
     #[test]
     fn identity_file_contains_no_plaintext_private_key() {
         let path = identity_path("protected");
@@ -368,6 +396,25 @@ mod tests {
         assert!(!file_bytes
             .windows(private_key.len())
             .any(|window| window == private_key));
+        let _ = fs::remove_file(path);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_identity_file_is_owner_only_and_round_trips() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let path = identity_path("linux-permissions");
+        let first = DeviceIdentity::load_or_create(&path).expect("create identity");
+        assert_eq!(
+            fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
+        let device_id = first.device_id().to_string();
+        drop(first);
+
+        let second = DeviceIdentity::load_or_create(&path).expect("reload identity");
+        assert_eq!(second.device_id(), device_id);
         let _ = fs::remove_file(path);
     }
 }

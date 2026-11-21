@@ -67,6 +67,12 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Publish checksums and provide installers that download the matching binary without building source on the user's device.
   - **Completion note (2026-11-21):** Added version-tagged Linux x86_64 and Windows x86_64 packages, SHA-256 checksums, one-command installers, a Team Herdr version identity, and a guard against self-updating from upstream Herdr. GitHub Actions published release `v0.1.4`. Installers now register the `herdr` command on the current user's PATH; Linux shell startup files are updated so new terminals resolve it. Verification: release workflow run `44896414916` succeeded; both downloaded archives matched published checksums; the Windows binary reported `herdr v0.1.4`; installer syntax checks passed. Limitations: ARM64 Linux and macOS binaries are pending; installing on the EC2 instance and the two-client Internet walkthrough remain in task 1.9.
 
+- [ ] **1.11 Enable local team profile setup on Linux.**
+  - Use a persistent XDG/home database path instead of `/tmp`.
+  - Support Linux signing identities without logging or transmitting their private keys; document their local storage protection.
+  - Verify profile creation and identity reload in the Linux release build.
+  - **Progress note (2026-11-21):** EC2 profile setup failed because Linux key storage was unsupported and the dashboard defaulted to `/tmp`. The owner explicitly approved an unencrypted, owner-only Linux identity file for this prototype. The release workflow now includes a Linux onboarding smoke step; pending release build and EC2 retest.
+
 ## Known prototype limitations
 
 - Permission inspection is available; permission grant/revoke UI needs a signed synchronized domain command.

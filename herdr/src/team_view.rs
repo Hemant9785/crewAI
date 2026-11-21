@@ -19,11 +19,34 @@ pub(crate) fn default_database_path() -> PathBuf {
     if let Some(path) = env::var_os(TEAM_DB_ENV).filter(|value| !value.is_empty()) {
         return PathBuf::from(path);
     }
-    env::var_os("LOCALAPPDATA")
-        .map(PathBuf::from)
-        .unwrap_or_else(env::temp_dir)
-        .join("Herdr")
-        .join("team.sqlite")
+    database_path_from(
+        env::var_os("LOCALAPPDATA"),
+        env::var_os("XDG_DATA_HOME"),
+        env::var_os("HOME"),
+        env::temp_dir(),
+    )
+}
+
+fn database_path_from(
+    local_app_data: Option<std::ffi::OsString>,
+    xdg_data_home: Option<std::ffi::OsString>,
+    home: Option<std::ffi::OsString>,
+    temporary_directory: PathBuf,
+) -> PathBuf {
+    if let Some(path) = local_app_data.filter(|value| !value.is_empty()) {
+        return PathBuf::from(path).join("Herdr").join("team.sqlite");
+    }
+    if let Some(path) = xdg_data_home.filter(|value| !value.is_empty()) {
+        return PathBuf::from(path).join("herdr").join("team.sqlite");
+    }
+    if let Some(home) = home.filter(|value| !value.is_empty()) {
+        return PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("herdr")
+            .join("team.sqlite");
+    }
+    temporary_directory.join("Herdr").join("team.sqlite")
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -382,6 +405,31 @@ mod tests {
         let snapshot = TeamDashboardSnapshot::empty();
         assert!(snapshot.is_empty());
         assert_eq!(MAX_DASHBOARD_ROWS, 100);
+    }
+
+    #[test]
+    fn default_database_path_uses_persistent_linux_data_directories() {
+        let xdg_path = database_path_from(
+            None,
+            Some("/home/ec2-user/.local/share".into()),
+            Some("/home/ec2-user".into()),
+            PathBuf::from("/tmp"),
+        );
+        assert_eq!(
+            xdg_path,
+            PathBuf::from("/home/ec2-user/.local/share/herdr/team.sqlite")
+        );
+
+        let home_path = database_path_from(
+            None,
+            None,
+            Some("/home/ec2-user".into()),
+            PathBuf::from("/tmp"),
+        );
+        assert_eq!(
+            home_path,
+            PathBuf::from("/home/ec2-user/.local/share/herdr/team.sqlite")
+        );
     }
 
     #[test]

@@ -27,8 +27,9 @@ the team relay.
 ### Set up and invite from Herdr
 
 Open Herdr, open the top-right global menu, and choose **team dashboard**. The
-local database defaults to `%LOCALAPPDATA%\Herdr\team.sqlite`; an existing
-`HERDR_TEAM_DB` value continues to select a custom database.
+local database defaults to `%LOCALAPPDATA%\Herdr\team.sqlite` on Windows and
+to `$XDG_DATA_HOME/herdr/team.sqlite` or `~/.local/share/herdr/team.sqlite` on
+Linux. An existing `HERDR_TEAM_DB` value continues to select a custom database.
 
 Use the dashboard shortcuts to complete team setup:
 
