@@ -11,14 +11,14 @@ For the team setup, invitation, relay deployment, `/task`, `/brodcast`, and
 
 ## Install a release build
 
-After a versioned GitHub release is published, install the prebuilt binary on
-Linux with one command:
+The current release is available on the GitHub Releases page. Install its
+prebuilt binary on Linux with one command:
 
 ```sh
 curl -fsSL https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-team-herdr.sh | sh
 ```
 
-The installer selects the Linux architecture, verifies the SHA-256 checksum,
+The installer checks the Linux architecture, verifies the SHA-256 checksum,
 and installs to `~/.local/bin/team-herdr`. Run it with:
 
 ```sh
@@ -35,9 +35,9 @@ It installs the Windows binary and bundled ConPTY files under
 `%LOCALAPPDATA%\Programs\TeamHerdr`. Linux x86_64 and Windows x86_64 release
 assets are built from version tags and published on the GitHub
 [Releases](https://github.com/Hemant9785/crewAI/releases) page. The installers
-need a published release to download; they do not compile source on the user's
-machine. Release binaries do not self-update from upstream Herdr; rerun the
-matching installer when a new Team Herdr release is published.
+download the published binary without compiling source on the user's machine.
+Release binaries do not self-update from upstream Herdr; rerun the matching
+installer when a new Team Herdr release is published.
 
 ## Prerequisites
 

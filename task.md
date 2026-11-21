@@ -62,10 +62,10 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Record screenshots or output and platform limitations.
   - **Progress note (2026-11-21):** The full Rust suite completed with 3,474 passed, 61 failed, and 12 ignored. Failures covered existing worktree, session, Windows/platform, manifest, and several shell rendering tests; focused team/dashboard/feed/sync suites and the integrated check passed. Manual acceptance is blocked until a second Windows laptop and network are available. Next action: run the documented invite/task/check workflow with a teammate laptop and verify relay reconnect.
 
-- [ ] **1.10 Ship prebuilt release binaries with one-command installers.**
+- [x] **1.10 Ship prebuilt release binaries with one-command installers.**
   - Build Linux x86_64 and Windows x86_64 release packages from version tags.
   - Publish checksums and provide installers that download the matching binary without building source on the user's device.
-  - **Progress note (2026-11-21):** Added the release workflow, project version identity, upstream-update guard, checksum-verified Linux and Windows installers, and README instructions. ARM64 cross-linking blocked the first release attempts, so the prototype target is narrowed to Linux x86_64 and Windows x86_64. Pending: confirm GitHub Actions publishes the release, then install it on EC2 and run the two-client collaboration walkthrough.
+  - **Completion note (2026-11-21):** Added version-tagged Linux x86_64 and Windows x86_64 packages, SHA-256 checksums, one-command installers, a Team Herdr version identity, and a guard against self-updating from upstream Herdr. GitHub Actions published release `v0.1.4`. Verification: release workflow run `44896414916` succeeded; the Windows installer downloaded and checksum-verified the release, and the installed `herdr.exe --version` reported `herdr v0.1.4`. `bash -n tools/install-team-herdr.sh` and workflow YAML parsing passed. Limitations: ARM64 Linux and macOS binaries are pending; installing on the EC2 instance and the two-client Internet walkthrough remain in task 1.9.
 
 ## Known prototype limitations
 
