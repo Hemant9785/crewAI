@@ -2750,6 +2750,11 @@ fn preview_assets_for_build<'a>(
 }
 
 fn remote_release_asset(asset_key: &str) -> io::Result<RemoteReleaseAsset> {
+    if crate::build_info::is_project_distribution() {
+        return Err(io::Error::other(
+            "remote binary updates are disabled for Team Herdr release builds; install a matching release on the remote host manually",
+        ));
+    }
     if crate::build_info::is_preview() {
         let build_id = crate::build_info::build_id().ok_or_else(|| {
             io::Error::other("preview client has no build id; set HERDR_REMOTE_BINARY or install Herdr on the remote manually")

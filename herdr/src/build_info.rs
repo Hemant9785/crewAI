@@ -1,6 +1,13 @@
 //! Build identity helpers.
 
-pub const BASE_VERSION: &str = env!("CARGO_PKG_VERSION");
+pub const BASE_VERSION: &str = match option_env!("CREWAI_VERSION") {
+    Some(version) => version,
+    None => env!("CARGO_PKG_VERSION"),
+};
+
+pub fn is_project_distribution() -> bool {
+    option_env!("CREWAI_DISTRIBUTION").is_some()
+}
 
 pub fn channel() -> &'static str {
     non_empty(option_env!("HERDR_BUILD_CHANNEL")).unwrap_or("stable")

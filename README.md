@@ -9,10 +9,41 @@ permission-aware repository requests, and bounded agent execution.
 For the team setup, invitation, relay deployment, `/task`, `/brodcast`, and
 `/read` walkthrough, see [Internet team prototype](docs/internet-team.md).
 
+## Install a release build
+
+After a versioned GitHub release is published, install the prebuilt binary on
+Linux with one command:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-team-herdr.sh | sh
+```
+
+The installer selects the Linux architecture, verifies the SHA-256 checksum,
+and installs to `~/.local/bin/team-herdr`. Run it with:
+
+```sh
+~/.local/bin/team-herdr
+```
+
+For Windows, run this in PowerShell:
+
+```powershell
+irm https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-team-herdr.ps1 | iex
+```
+
+It installs the Windows binary and bundled ConPTY files under
+`%LOCALAPPDATA%\Programs\TeamHerdr`. Linux x86_64, Linux aarch64, and Windows
+x86_64 release assets are built from version tags and published on the GitHub
+[Releases](https://github.com/Hemant9785/crewAI/releases) page. The installers
+need a published release to download; they do not compile source on the user's
+machine. Release binaries do not self-update from upstream Herdr; rerun the
+matching installer when a new Team Herdr release is published.
+
 ## Prerequisites
 
-The documented build workflow targets Windows 10/11 and keeps generated files
-on the E: drive.
+The local development build workflow targets Windows 10/11 and keeps generated
+files on the E: drive. End users can install a published Linux or Windows
+release without setting up Rust or Zig.
 
 - Git
 - PowerShell 5.1 or PowerShell 7+
@@ -193,6 +224,9 @@ setup, invitation, and command examples.
 - `herdr/` — application source and vendored terminal dependencies
 - `docs/` — operations, networking, and MVP walkthrough documentation
 - `tools/build-herdr.ps1` — E:-drive build and test wrapper for Windows
+- `.github/workflows/release.yml` — version-tagged Linux and Windows release builds
+- `tools/install-team-herdr.sh` — Linux release installer
+- `tools/install-team-herdr.ps1` — Windows release installer
 
 The `relay/` directory contains the Cloudflare Worker and per-team Durable
 Object. The Internet setup and command walkthrough is in

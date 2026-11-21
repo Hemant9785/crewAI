@@ -1,0 +1,142 @@
+name: Team Herdr Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            runner: ubuntu-24.04
+            asset: team-herdr-linux-x86_64.tar.gz
+          - target: aarch64-unknown-linux-musl
+            runner: ubuntu-24.04
+            asset: team-herdr-linux-aarch64.tar.gz
+          - target: x86_64-pc-windows-msvc
+            runner: windows-2022
+            asset: team-herdr-windows-x86_64.zip
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+    env:
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: 'true'
+      CREWAI_VERSION: ${{ github.ref_name }}
+      CREWAI_DISTRIBUTION: '1'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Validate release tag
+        shell: bash
+        run: |
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Expected a version tag like v0.1.0, got $GITHUB_REF_NAME" >&2
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: 1.96.1
+          targets: ${{ matrix.target }}
+
+      - uses: vercel-labs/setup-zig@83c1594f26b86da8a9a8ddd9b5ee5f3af0f96943 # v1.0.2
+        with:
+          version: 0.16.0
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build musl-tools gcc-aarch64-linux-gnu crossbuild-essential-arm64
+
+      - name: Set Linux aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        with:
+          workspaces: herdr -> target
+          key: team-release-${{ matrix.target }}
+
+      - name: Build release binary
+        working-directory: herdr
+        run: cargo build --release --locked --bin herdr --target ${{ matrix.target }}
+
+      - name: Package Linux binary
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          ASSET: ${{ matrix.asset }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          stage="$RUNNER_TEMP/team-herdr-package"
+          mkdir -p "$stage"
+          cp "herdr/target/$TARGET/release/herdr" "$stage/herdr"
+          cp herdr/LICENSE "$stage/LICENSE"
+          "$stage/herdr" --version | grep -F "$GITHUB_REF_NAME"
+          tar -C "$stage" -czf "$ASSET" herdr LICENSE
+          file "$ASSET"
+
+      - name: Package Windows binary
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          ASSET: ${{ matrix.asset }}
+          TARGET: ${{ matrix.target }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $package = Join-Path $env:RUNNER_TEMP 'Microsoft.Windows.Console.ConPTY.nupkg'
+          $stage = Join-Path $env:RUNNER_TEMP 'team-herdr-windows'
+          .\herdr\scripts\package_windows_conpty.ps1 `
+            -HerdrExe "herdr\target\$env:TARGET\release\herdr.exe" `
+            -PackagePath $package `
+            -StageDir $stage `
+            -OutputPath $env:ASSET
+          Copy-Item 'herdr\LICENSE' (Join-Path $stage 'LICENSE') -Force
+          $versionOutput = (& (Join-Path $stage 'herdr.exe') --version | Out-String).Trim()
+          if ($versionOutput -notmatch [regex]::Escape($env:GITHUB_REF_NAME)) {
+            throw "Packaged binary has unexpected version identity: $versionOutput"
+          }
+          Remove-Item -LiteralPath $env:ASSET -Force
+          Compress-Archive -Path (Join-Path $stage '*') -DestinationPath $env:ASSET -CompressionLevel Optimal
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Create checksums
+        working-directory: dist
+        run: sha256sum team-herdr-* > SHA256SUMS
+
+      - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        with:
+          generate_release_notes: true
+          files: |
+            dist/team-herdr-linux-x86_64.tar.gz
+            dist/team-herdr-linux-aarch64.tar.gz
+            dist/team-herdr-windows-x86_64.zip
+            dist/SHA256SUMS

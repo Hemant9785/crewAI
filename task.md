@@ -62,6 +62,11 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Record screenshots or output and platform limitations.
   - **Progress note (2026-11-21):** The full Rust suite completed with 3,474 passed, 61 failed, and 12 ignored. Failures covered existing worktree, session, Windows/platform, manifest, and several shell rendering tests; focused team/dashboard/feed/sync suites and the integrated check passed. Manual acceptance is blocked until a second Windows laptop and network are available. Next action: run the documented invite/task/check workflow with a teammate laptop and verify relay reconnect.
 
+- [ ] **1.10 Ship prebuilt release binaries with one-command installers.**
+  - Build Linux x86_64, Linux aarch64, and Windows x86_64 release packages from version tags.
+  - Publish checksums and provide installers that download the matching binary without building source on the user's device.
+  - **Progress note (2026-11-21):** Added the release workflow, project version identity, upstream-update guard, checksum-verified Linux and Windows installers, and README instructions. Pending: publish a version tag, confirm GitHub Actions creates all assets, then install the Linux release on EC2 and run the two-client collaboration walkthrough.
+
 ## Known prototype limitations
 
 - Permission inspection is available; permission grant/revoke UI needs a signed synchronized domain command.

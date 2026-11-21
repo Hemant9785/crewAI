@@ -573,6 +573,9 @@ fn release_info_from_manifests(
 
 /// Check the hosted update manifests for the latest release. Returns release info if newer.
 fn check_latest() -> Result<Option<ReleaseInfo>, String> {
+    if crate::build_info::is_project_distribution() {
+        return Ok(None);
+    }
     let manifest = fetch_update_manifest()?;
     let preview = if UpdateChannel::configured() == UpdateChannel::Preview {
         Some(fetch_preview_manifest()?)
