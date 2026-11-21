@@ -19,10 +19,11 @@ curl -fsSL https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/instal
 ```
 
 The installer checks the Linux architecture, verifies the SHA-256 checksum,
-and installs to `~/.local/bin/team-herdr`. Run it with:
+installs the `herdr` command to `~/.local/bin`, and adds that folder to your
+Bash or Zsh startup files. Open a new terminal and run:
 
 ```sh
-~/.local/bin/team-herdr
+herdr
 ```
 
 For Windows, run this in PowerShell:
@@ -32,9 +33,11 @@ irm https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-team-
 ```
 
 It installs the Windows binary and bundled ConPTY files under
-`%LOCALAPPDATA%\Programs\TeamHerdr`. Linux x86_64 and Windows x86_64 release
-assets are built from version tags and published on the GitHub
-[Releases](https://github.com/Hemant9785/crewAI/releases) page. The installers
+`%LOCALAPPDATA%\Programs\TeamHerdr`, adds that directory to your user `PATH`,
+and makes `herdr` available in the current PowerShell session and new
+terminals. Linux x86_64 and Windows x86_64 release assets are built from
+version tags and published on the GitHub [Releases](https://github.com/Hemant9785/crewAI/releases)
+page. The installers
 download the published binary without compiling source on the user's machine.
 Release binaries do not self-update from upstream Herdr; rerun the matching
 installer when a new Team Herdr release is published.

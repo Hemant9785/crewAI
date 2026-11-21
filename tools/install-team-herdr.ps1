@@ -8,6 +8,7 @@ $installDir = if ($env:TEAM_HERDR_INSTALL_DIR) {
 } else {
     Join-Path $env:LOCALAPPDATA 'Programs\TeamHerdr'
 }
+$installDir = [System.IO.Path]::GetFullPath($installDir)
 $tempDir = Join-Path ([System.IO.Path]::GetTempPath()) ([System.Guid]::NewGuid().ToString('N'))
 
 try {
@@ -38,8 +39,31 @@ try {
 
     New-Item -ItemType Directory -Path $installDir -Force | Out-Null
     Copy-Item -Path (Join-Path $extractDir '*') -Destination $installDir -Recurse -Force
+
+    $normalizePathEntry = {
+        param([string]$Entry)
+        $value = [Environment]::ExpandEnvironmentVariables($Entry.Trim().Trim('"'))
+        try { [System.IO.Path]::GetFullPath($value).TrimEnd('\') } catch { $value.TrimEnd('\') }
+    }
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $userHasInstallDir = @($userPath -split ';' | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_) -and (& $normalizePathEntry $_) -ieq $installDir.TrimEnd('\')
+    }).Count -gt 0
+    if (-not $userHasInstallDir) {
+        $updatedUserPath = if ([string]::IsNullOrWhiteSpace($userPath)) { $installDir } else { "$installDir;$userPath" }
+        [Environment]::SetEnvironmentVariable('Path', $updatedUserPath, 'User')
+    }
+
+    $currentHasInstallDir = @($env:Path -split ';' | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_) -and (& $normalizePathEntry $_) -ieq $installDir.TrimEnd('\')
+    }).Count -gt 0
+    if (-not $currentHasInstallDir) {
+        $env:Path = if ([string]::IsNullOrWhiteSpace($env:Path)) { $installDir } else { "$installDir;$env:Path" }
+    }
+
     Write-Host "Installed Team Herdr to $installDir"
-    Write-Host "Launch it with: `"$(Join-Path $installDir 'herdr.exe')`""
+    Write-Host 'The current PowerShell session now recognizes herdr. New terminal windows will use the updated PATH.'
+    Write-Host 'Run: herdr'
 } finally {
     if (Test-Path -LiteralPath $tempDir) {
         Remove-Item -LiteralPath $tempDir -Recurse -Force

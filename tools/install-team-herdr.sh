@@ -47,8 +47,47 @@ mkdir -p "$TEMP_DIR/unpacked" "$INSTALL_DIR" "${HOME}/.local/share/licenses/team
 tar -xzf "${TEMP_DIR}/${ASSET}" -C "$TEMP_DIR/unpacked"
 [ -x "${TEMP_DIR}/unpacked/herdr" ] || fail "release archive does not contain the executable"
 [ -f "${TEMP_DIR}/unpacked/LICENSE" ] || fail "release archive does not contain the license"
-install -m 0755 "${TEMP_DIR}/unpacked/herdr" "${INSTALL_DIR}/team-herdr"
+install -m 0755 "${TEMP_DIR}/unpacked/herdr" "${INSTALL_DIR}/herdr"
 install -m 0644 "${TEMP_DIR}/unpacked/LICENSE" "${HOME}/.local/share/licenses/team-herdr/LICENSE"
 
-printf 'Installed team-herdr to %s/team-herdr\n' "$INSTALL_DIR"
-printf 'Launch it with: %s/team-herdr\n' "$INSTALL_DIR"
+add_path_line() {
+    rc_file="$1"
+    path_line="case \":\$PATH:\" in *\":$INSTALL_DIR:\"*) ;; *) export PATH=\"$INSTALL_DIR:\$PATH\" ;; esac"
+    if ! grep -Fqx "$path_line" "$rc_file" 2>/dev/null; then
+        printf '\n# Added by the Team Herdr installer\n%s\n' "$path_line" >> "$rc_file"
+    fi
+}
+
+case "${SHELL##*/}" in
+    bash)
+        add_path_line "$HOME/.bashrc"
+        if [ -f "$HOME/.bash_profile" ]; then
+            add_path_line "$HOME/.bash_profile"
+        else
+            add_path_line "$HOME/.profile"
+        fi
+        ;;
+    zsh)
+        add_path_line "$HOME/.zshrc"
+        if [ -f "$HOME/.zprofile" ]; then
+            add_path_line "$HOME/.zprofile"
+        else
+            add_path_line "$HOME/.profile"
+        fi
+        ;;
+    fish)
+        fish_config="$HOME/.config/fish/conf.d"
+        mkdir -p "$fish_config"
+        fish_path_file="$fish_config/team-herdr-path.fish"
+        fish_path_line="fish_add_path \"$INSTALL_DIR\""
+        if ! grep -Fqx "$fish_path_line" "$fish_path_file" 2>/dev/null; then
+            printf '%s\n' "$fish_path_line" >> "$fish_path_file"
+        fi
+        ;;
+    *)
+        add_path_line "$HOME/.profile"
+        ;;
+esac
+
+printf 'Installed herdr to %s/herdr\n' "$INSTALL_DIR"
+printf 'Open a new terminal and run: herdr\n'
