@@ -32,8 +32,8 @@ irm https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-team-
 ```
 
 It installs the Windows binary and bundled ConPTY files under
-`%LOCALAPPDATA%\Programs\TeamHerdr`. Linux x86_64, Linux aarch64, and Windows
-x86_64 release assets are built from version tags and published on the GitHub
+`%LOCALAPPDATA%\Programs\TeamHerdr`. Linux x86_64 and Windows x86_64 release
+assets are built from version tags and published on the GitHub
 [Releases](https://github.com/Hemant9785/crewAI/releases) page. The installers
 need a published release to download; they do not compile source on the user's
 machine. Release binaries do not self-update from upstream Herdr; rerun the

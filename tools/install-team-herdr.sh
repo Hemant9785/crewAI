@@ -20,8 +20,7 @@ esac
 
 case "$(uname -m)" in
     x86_64|amd64) ASSET="team-herdr-linux-x86_64.tar.gz" ;;
-    aarch64|arm64) ASSET="team-herdr-linux-aarch64.tar.gz" ;;
-    *) fail "unsupported Linux architecture: $(uname -m)" ;;
+    *) fail "the current release supports Linux x86_64; this machine reports $(uname -m)" ;;
 esac
 
 TEMP_DIR="$(mktemp -d)"
