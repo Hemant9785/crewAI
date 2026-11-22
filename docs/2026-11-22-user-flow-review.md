@@ -13,7 +13,7 @@ The dashboard provides the main prototype paths, but several important parts of 
 | Tasks | Assign multiple members, inbox, state changes, completion notices, CLI follow-ups | Permission checks and concurrent state convergence |
 | Broadcast | Signed team message, local persistence, relay synchronization, recent feed | Preapproval read access, group privacy, full-message reading |
 
-## Setup fixes included in v0.1.8 candidate
+## Setup fixes included in v0.1.8
 
 - **Missing relay configuration:** dashboard CreateTeam now supplies the project relay URL and a cryptographically random token. It passes credentials in the child environment, not command arguments. Invite uses those explicit in-memory credentials rather than looking only in the parent's environment. Evidence: `start_team_dashboard_action`, `prepare_team_dashboard_relay` in [overlay_input.rs](../herdr/src/client/shell/overlay_input.rs), and `create_invite_bundle_with_credentials` in [team.rs](../herdr/src/cli/team.rs).
 - **Duplicate default member IDs:** fresh profile forms generate distinct member IDs; an existing profile's ID is preserved. The team reviewer reproduced the former `member-1` collision using isolated v0.1.7 manager/implementer profiles: join failed with `team membership conflicts with existing member` after claiming the invite. Evidence: profile form in [overlay_input.rs](../herdr/src/client/shell/overlay_input.rs), `ensure_member` in [team_storage.rs](../herdr/src/team_storage.rs).
@@ -89,3 +89,5 @@ These changes do not persist credentials across a full app exit. Keep the new ma
 - Root: setup regressions, build, release evidence recorded in `task.md` as checks complete. Existing broad-suite failures and transport stalls remain documented there.
 
 Recommended implementation order: approved-device relay read access; shared task authorization/convergence; manager recovery; readable `/read` with native executable discovery; profile/team edits; in-dashboard details/follow-ups and contextual slash commands.
+
+Release verification: v0.1.8 workflow `45019140816` succeeded for Windows and Linux. Both downloaded package checksums matched. Windows v0.1.8 passed the isolated pairing/approval/rejection/status/task/broadcast smoke and was installed locally. Linux onboarding passed in the release workflow. Dashboard regression suite: 12 passed. Physical EC2-to-Windows UI retest remains pending.
