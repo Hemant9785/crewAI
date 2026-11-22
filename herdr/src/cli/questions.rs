@@ -154,6 +154,78 @@ pub(crate) fn publish_project(
     }
     Ok(p)
 }
+/// Idempotently announce approved local projects after a device joins a team.
+/// Call before uploading team events and again after applying membership approval.
+/// Only labels and owner-scoped IDs leave this device.
+pub(crate) fn publish_local_projects(database: &Path, identity: &Path) -> Result<usize, String> {
+    let id = DeviceIdentity::load_existing(identity).map_err(|e| e.to_string())?;
+    let mut store = TeamStore::open(database).map_err(|e| e.to_string())?;
+    let owner = profile(&store)?;
+    if store
+        .device_public_key(id.device_id())
+        .map_err(|e| e.to_string())?
+        .as_deref()
+        != Some(id.public_key().as_str())
+    {
+        return Ok(0);
+    }
+    let teams = store.teams().map_err(|e| e.to_string())?;
+    let approvals = store.repository_approvals().map_err(|e| e.to_string())?;
+    let mut announced = 0;
+    for approval in approvals.into_iter().filter(|a| a.owner_member_id == owner) {
+        let repository_id = if approval.repository_id.starts_with(&owner_prefix(&owner)) {
+            approval.repository_id.clone()
+        } else {
+            format!(
+                "{}{:x}",
+                owner_prefix(&owner),
+                Sha256::digest(approval.repository_id.as_bytes())
+            )
+        };
+        let label = Path::new(&approval.local_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .filter(|n| !n.trim().is_empty())
+            .unwrap_or("My project")
+            .chars()
+            .take(120)
+            .collect::<String>()
+            .replace(['\n', '\r'], " ");
+        store
+            .save_repository_approval(&RepositoryApproval {
+                repository_id: repository_id.clone(),
+                owner_member_id: owner.clone(),
+                local_path: approval.local_path,
+                approved_at: approval.approved_at,
+            })
+            .map_err(|e| e.to_string())?;
+        for team in &teams {
+            if store
+                .published_projects(&team.team_id)
+                .map_err(|e| e.to_string())?
+                .iter()
+                .any(|p| p.repository_id == repository_id)
+            {
+                continue;
+            }
+            let metadata = Project {
+                repository_id: repository_id.clone(),
+                owner_member_id: owner.clone(),
+                label: label.clone(),
+            };
+            append(
+                &mut store,
+                &id,
+                &team.team_id,
+                &owner,
+                EventType::RepositoryApproved,
+                serde_json::to_value(metadata).map_err(|e| e.to_string())?,
+            )?;
+            announced += 1;
+        }
+    }
+    Ok(announced)
+}
 pub(crate) fn list_projects(
     database: &Path,
     team: &str,

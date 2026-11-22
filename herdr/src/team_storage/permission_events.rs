@@ -26,6 +26,9 @@ pub(crate) fn owner_prefix(owner: &str) -> String {
 fn invalid() -> StorageError {
     StorageError::MembershipConflict("project owner or question consent")
 }
+fn missing_dependency() -> StorageError {
+    StorageError::Sql(rusqlite::Error::QueryReturnedNoRows)
+}
 fn active(c: &Connection, t: &str, m: &str) -> Result<bool, StorageError> {
     Ok(c.query_row(
         "SELECT COUNT(*) FROM team_members WHERE team_id=?1 AND member_id=?2 AND active=1",
@@ -76,7 +79,7 @@ pub(super) fn apply(tx: &Transaction<'_>, e: &Event, _at: u64) -> Result<bool, S
             let owner = projects(tx, &e.team_id)?
                 .into_iter()
                 .find(|p| p.repository_id == g.repository_id)
-                .ok_or_else(invalid)?
+                .ok_or_else(missing_dependency)?
                 .owner_member_id;
             if owner != e.actor_member_id
                 || g.owner_member_id != owner
@@ -94,7 +97,7 @@ pub(super) fn apply(tx: &Transaction<'_>, e: &Event, _at: u64) -> Result<bool, S
             }
             if let Some(id) = &g.request_id {
                 if !request_team(tx, &e.team_id, id)? {
-                    return Err(invalid());
+                    return Err(missing_dependency());
                 }
                 let(a,b,k,p):(String,String,String,String)=tx.query_row("SELECT requester_member_id,target_member_id,kind_json,payload FROM requests WHERE request_id=?1",params![id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?,r.get(3)?)))?;
                 let p: Value = serde_json::from_str(&p)?;
@@ -126,7 +129,7 @@ pub(super) fn apply(tx: &Transaction<'_>, e: &Event, _at: u64) -> Result<bool, S
                         .ok()
                         .filter(|g| g.grant_id == r.grant_id)
                 })
-                .ok_or_else(invalid)?;
+                .ok_or_else(missing_dependency)?;
             if e.actor_member_id != g.owner_member_id {
                 return Err(invalid());
             }
@@ -154,7 +157,7 @@ pub(super) fn apply(tx: &Transaction<'_>, e: &Event, _at: u64) -> Result<bool, S
                 .and_then(Value::as_str)
                 .ok_or_else(invalid)?;
             if !request_team(tx, &e.team_id, id)? {
-                return Err(invalid());
+                return Err(missing_dependency());
             }
             let(a,b,k):(String,String,String)=tx.query_row("SELECT requester_member_id,target_member_id,kind_json FROM requests WHERE request_id=?1",params![id],|r|Ok((r.get(0)?,r.get(1)?,r.get(2)?)))?;
             if matches!(
@@ -308,6 +311,49 @@ mod tests {
     }
     fn request(s: &mut TeamStore, a: &DeviceIdentity, repo: &str, id: &str) {
         s.insert_verified_event(&event(a,"asker",EventType::RequestCreated,json!({"request_id":id,"requester_member_id":"asker","target_member_id":"owner","kind":RequestKind::Check,"payload":json!({"repository_id":repo,"question":"Explain this project"}).to_string(),"created_at":10})),10).unwrap();
+    }
+    #[test]
+    fn linked_projects_are_announced_once_after_join_without_local_paths() {
+        let (s, _owner, _asker, _repo) = setup();
+        s.save_profile(
+            &Member {
+                member_id: "owner".into(),
+                display_name: "Owner".into(),
+                role: Role::Implementer,
+                active: true,
+            },
+            1,
+            1,
+        )
+        .unwrap();
+        let root = s.path().parent().unwrap().to_path_buf();
+        s.save_repository_approval(&RepositoryApproval {
+            repository_id: "local-project".into(),
+            owner_member_id: "owner".into(),
+            local_path: root.to_string_lossy().into_owned(),
+            approved_at: 1,
+        })
+        .unwrap();
+        let identity = root.join("owner.json");
+        assert_eq!(
+            crate::cli::questions::publish_local_projects(s.path(), &identity).unwrap(),
+            1
+        );
+        assert_eq!(
+            crate::cli::questions::publish_local_projects(s.path(), &identity).unwrap(),
+            0
+        );
+        let announcements = values(&s.connection, "team", EventType::RepositoryApproved).unwrap();
+        assert_eq!(announcements.len(), 1);
+        assert!(announcements[0].1.get("local_path").is_none());
+        assert!(!announcements[0]
+            .1
+            .to_string()
+            .contains(&root.to_string_lossy().to_string()));
+        assert!(s
+            .repository_approval(announcements[0].1["repository_id"].as_str().unwrap())
+            .unwrap()
+            .is_some());
     }
     #[test]
     fn owner_must_confirm_limited_isolation_and_can_decline_without_codex() {
