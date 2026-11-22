@@ -33,6 +33,7 @@ mod scroll;
 mod settings;
 mod state;
 mod surface_patch;
+mod team_join_inbox;
 mod team_panel;
 mod text_editor;
 mod word_selection;

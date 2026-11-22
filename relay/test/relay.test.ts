@@ -18,6 +18,42 @@ interface RelayPage {
 }
 
 describe("team relay", () => {
+  it("delivers signed join requests to the authority and records approval without a return code", async () => {
+    const teamId = "team-auto-join";
+    const owner = await testIdentity(), applicant = await testIdentity();
+    expect((await upload(teamId, [await signedEnvelope(teamId, "team.created", "evt-auto-bootstrap", undefined, owner)])).status).toBe(200);
+    const request = await signedJoin(teamId, applicant);
+    expect((await joinCommand(teamId, { action: "submit", request })).status).toBe(201);
+    expect((await joinCommand(teamId, { action: "submit", request })).status).toBe(200);
+    const inbox = await controlJoin(teamId, owner, "list", "");
+    expect(await inbox.json()).toMatchObject({ requests: [{ request, status: "pending" }] });
+    expect((await controlJoin(teamId, applicant, "list", "")).status).toBe(403);
+    expect((await controlJoin(teamId, applicant, "approved", applicant.deviceId)).status).toBe(403);
+    expect((await controlJoin(teamId, owner, "approved", applicant.deviceId, undefined, request.signature)).status).toBe(200);
+    expect(await (await controlJoin(teamId, applicant, "status", applicant.deviceId)).json()).toEqual({ status: "approved" });
+    expect(await (await controlJoin(teamId, owner, "list", "")).json()).toEqual({ requests: [] });
+  });
+
+  it("rejects forged joins, stale or unauthorized decisions, and conflicting replay", async () => {
+    const teamId = "team-auto-join-negative";
+    const owner = await testIdentity(), applicant = await testIdentity(), stranger = await testIdentity();
+    expect((await upload(teamId, [await signedEnvelope(teamId, "team.created", "evt-auto-negative", undefined, owner)])).status).toBe(200);
+    const request = await signedJoin(teamId, applicant);
+    expect((await joinCommand(teamId, { action: "submit", request: { ...request, member: { ...request.member, display_name: "Forged" } } })).status).toBe(401);
+    expect((await joinCommand(teamId, { action: "submit", request: { ...request, team_id: "wrong-team" } })).status).toBe(400);
+    expect((await joinCommand(teamId, { action: "submit", request })).status).toBe(201);
+    expect((await controlJoin(teamId, stranger, "status", applicant.deviceId)).status).toBe(403);
+    expect((await controlJoin(teamId, owner, "rejected", applicant.deviceId, 1)).status).toBe(400);
+    expect((await controlJoin(teamId, owner, "rejected", applicant.deviceId, undefined, request.signature)).status).toBe(200);
+    expect((await controlJoin(teamId, owner, "rejected", applicant.deviceId, undefined, request.signature)).status).toBe(200);
+    expect((await controlJoin(teamId, owner, "approved", applicant.deviceId, undefined, request.signature)).status).toBe(409);
+    expect(await (await controlJoin(teamId, applicant, "status", applicant.deviceId)).json()).toEqual({ status: "rejected" });
+    expect(await (await joinCommand(teamId, { action: "submit", request })).json()).toEqual({ status: "rejected" });
+    const newer = await signedJoin(teamId, applicant, "new-invitation", request.created_at + 1);
+    expect((await joinCommand(teamId, { action: "submit", request: newer })).status).toBe(201);
+    expect((await controlJoin(teamId, owner, "rejected", applicant.deviceId, undefined, request.signature)).status).toBe(409);
+    expect(await (await controlJoin(teamId, applicant, "status", applicant.deviceId)).json()).toEqual({ status: "pending" });
+  });
   it("stores only valid signed events and pages them with the team token", async () => {
     const first = await signedEnvelope(TEAM_ID, "team.created", "evt-bootstrap");
     const second = await signedEnvelope(TEAM_ID, "broadcast.created", "evt-broadcast");
@@ -277,6 +313,26 @@ async function rotateToken(
       signature,
     }),
   }));
+}
+
+async function signedJoin(teamId: string, identity: TestIdentity, invitation_id = "invitation-join-test", created_at = Math.floor(Date.now() / 1000)) {
+  const member = { member_id: "applicant", display_name: "Developer", role: "Implementer", active: true };
+  const device = { device_id: identity.deviceId, member_id: member.member_id, public_key: identity.publicKeyBase64, active: true };
+  const signature = toBase64(new Uint8Array(await crypto.subtle.sign("Ed25519", identity.privateKey,
+    asArrayBuffer(encoder.encode(JSON.stringify(["team-assistant/join-request/v1", invitation_id, teamId, member, device, created_at]))))));
+  return { invitation_id, team_id: teamId, member, device, created_at, signature };
+}
+
+async function joinCommand(teamId: string, body: unknown): Promise<Response> {
+  return exports.default.fetch!(new Request(`https://relay.test/v1/teams/${teamId}/join-requests`, {
+    method: "POST", headers: { authorization: AUTHORIZATION, "content-type": "application/json" }, body: JSON.stringify(body),
+  }));
+}
+
+async function controlJoin(teamId: string, signer: TestIdentity, action: string, request_id: string, created_at = Math.floor(Date.now() / 1000), request_signature = "") {
+  const signature = toBase64(new Uint8Array(await crypto.subtle.sign("Ed25519", signer.privateKey,
+    asArrayBuffer(encoder.encode(JSON.stringify(["team-assistant/join-inbox/v1", teamId, action, request_id, created_at, request_signature]))))));
+  return joinCommand(teamId, { action, request_id, created_at, signature, request_signature });
 }
 
 async function createShortInvite(teamId: string, inviteCode: string, token = TOKEN): Promise<Response> {

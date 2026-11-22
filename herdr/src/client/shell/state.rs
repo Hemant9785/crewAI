@@ -431,6 +431,7 @@ impl ClientTeamDashboardSection {
 
 #[derive(Debug)]
 pub(super) struct ClientTeamDashboardOverlay {
+    pub(super) join_inbox: ClientJoinInbox,
     pub(super) section: ClientTeamDashboardSection,
     pub(super) task_cursor: usize,
     pub(super) snapshot: Result<crate::team_view::TeamDashboardSnapshot, String>,
@@ -440,6 +441,16 @@ pub(super) struct ClientTeamDashboardOverlay {
     pub(super) relay_url: Option<String>,
     pub(super) relay_token: Option<String>,
     pub(super) share_code: Option<String>,
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ClientJoinInbox {
+    pub entries: Vec<crate::cli::join_inbox::Entry>,
+    pub cursor: usize,
+    pub next_poll: Option<std::time::Instant>,
+    pub pending: Option<std::sync::mpsc::Receiver<Result<crate::cli::join_inbox::Inbox, String>>>,
+    pub status: Option<String>,
+    pub error: Option<String>,
 }
 
 #[derive(Debug)]

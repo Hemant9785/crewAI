@@ -1,4 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
+import { JOIN_INBOX_SCHEMA, joinInbox } from "./join-inbox";
 import {
   MAX_BATCH_BYTES,
   MAX_BATCH_EVENTS,
@@ -100,7 +101,15 @@ export default {
     const tokenHash = await sha256Hex(encoder.encode(token));
 
     let forwarded: Request;
-    if (parts[3] === "invite-codes" && request.method === "POST") {
+    if (parts[3] === "join-requests" && request.method === "POST") {
+      const body = await readBoundedBody(request, MAX_INVITE_CODE_BODY_BYTES);
+      if (body === null) return json({ error: "request_too_large" }, 413);
+      forwarded = new Request("https://relay.internal/v1/join-requests", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-team-id": teamId, "x-team-token-hash": tokenHash },
+        body: asArrayBuffer(body),
+      });
+    } else if (parts[3] === "invite-codes" && request.method === "POST") {
       const body = await readBoundedBody(request, MAX_INVITE_CODE_BODY_BYTES);
       if (body === null) return json({ error: "request_too_large" }, 413);
       let decoded: unknown;
@@ -201,6 +210,7 @@ export class TeamRelay extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
+      ctx.storage.sql.exec(JOIN_INBOX_SCHEMA);
       ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS relay_team (
           team_id TEXT PRIMARY KEY,
@@ -230,6 +240,15 @@ export class TeamRelay extends DurableObject<Env> {
       return json({ error: "invalid_relay_request" }, 400);
     }
     const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/v1/join-requests") {
+      const team = this.ctx.storage.sql.exec<StoredTeamRow>("SELECT * FROM relay_team WHERE team_id = ?", teamId).toArray()[0];
+      if (!team || !timingSafeEqualText(team.token_hash, tokenHash)) return json({ error: "invalid_team_token" }, 401);
+      const body = await readBoundedBody(request, MAX_INVITE_CODE_BODY_BYTES);
+      if (body === null) return json({ error: "request_too_large" }, 413);
+      try {
+        return await joinInbox(this.ctx.storage.sql, teamId, team, JSON.parse(new TextDecoder().decode(body)));
+      } catch { return json({ error: "invalid_join_command" }, 400); }
+    }
     if (request.method === "POST" && url.pathname === "/v1/invite-codes") {
       const team = this.ctx.storage.sql
         .exec<StoredTeamRow>("SELECT token_hash FROM relay_team WHERE team_id = ?", teamId)

@@ -48,7 +48,7 @@ impl RelayCredentialSink {
         true
     }
 
-    fn get(&self) -> Option<(String, String)> {
+    pub(crate) fn get(&self) -> Option<(String, String)> {
         self.credentials.lock().ok()?.clone()
     }
 }

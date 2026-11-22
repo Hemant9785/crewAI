@@ -25,6 +25,7 @@ mod broadcast;
 mod check;
 mod completion;
 mod integration;
+pub(crate) mod join_inbox;
 mod machine;
 pub(crate) mod notification;
 mod onboard;

@@ -126,7 +126,8 @@ Dashboard shortcuts:
 | `c` | Create the team |
 | `i` | Create a six-digit invite (10 minutes, one use); `y` copies it |
 | `n` | Type six digits or paste a legacy invite code |
-| `a` | Paste and approve a teammate's signed join request code |
+| `a` | Open join requests; in Requests, approve the selected teammate |
+| `x` | Reject the selected join request in Requests |
 | `t` | Enter a task description, then select one or more team members with `Space`; press `Enter` to assign |
 | `b` | Broadcast a team message |
 | `q` | Request a remote repository check from a teammate |
@@ -140,13 +141,16 @@ it in progress, `d` to complete, `x` to cancel, and `!` to flag it for
 attention. Right-click an agent pane and choose **Link team task** to show its
 task in Agents; this pane-to-task link is local to the current Herdr session.
 
-For a first teammate: press `i`, then `y` to copy the invite code. Send it
-privately to them. They set up their device with `p`, press `n`, and type the six-digit
-code. They press `y` to copy their signed join request and send it privately
-back to you. Press `a` and paste that request to approve the new member. The relay temporarily stores the signed invitation and shared relay credential; its operator can read them. Share codes privately.
-Herdr keeps the credential in memory for the current session and starts
-background relay sync after a successful invite, join, or approval. After a
-restart, ask the manager for a new six-digit invite and use `n` to reconnect. Join-request approval still uses a longer signed code; terminal paste and Ctrl+Shift+V are supported in dashboard forms.
+For a first teammate: press `i`, then `y` to share the six-digit invite privately.
+The teammate sets up their profile with `p`, presses `n`, and enters the six digits.
+Their signed join request is sent automatically. On the manager dashboard, open
+**4 Requests**, select the teammate with `j`/`k`, then press `a` to approve or `x`
+to reject. The teammate sees pending, approved, or rejected status under Requests;
+background sync fetches approved membership. No return code or JSON file is needed.
+
+The relay operator can read temporary invitations and pairing metadata. Credentials
+stay in memory for the session. After a restart, ask for a fresh six-digit invite
+and use `n` to reconnect. Legacy manual approval remains available with capital `A`.
 
 ## Initialize a local profile from the UI
 

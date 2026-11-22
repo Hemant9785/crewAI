@@ -2,6 +2,7 @@ use super::*;
 
 fn dashboard_without_database() -> ClientShellOverlay {
     ClientShellOverlay::TeamDashboard(ClientTeamDashboardOverlay {
+        join_inbox: Default::default(),
         section: ClientTeamDashboardSection::Teammates,
         task_cursor: 0,
         snapshot: Err("HERDR_TEAM_DB is not set".into()),
@@ -30,6 +31,68 @@ fn dashboard_with_join_form() -> ClientShellState {
     });
     state.overlay = Some(ClientShellOverlay::TeamDashboard(dashboard));
     state
+}
+
+#[test]
+fn approval_shortcut_opens_requests_without_a_paste_form() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.overlay = Some(dashboard_without_database());
+    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Char('a'),
+        KeyModifiers::empty(),
+    ))]);
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    assert_eq!(d.section, ClientTeamDashboardSection::Requests);
+    assert!(d.form.is_none());
+}
+
+#[test]
+fn join_inbox_renders_pending_member_and_decision_controls() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let ClientShellOverlay::TeamDashboard(mut d) = dashboard_without_database() else {
+        unreachable!()
+    };
+    d.section = ClientTeamDashboardSection::Requests;
+    d.snapshot = Ok(crate::team_view::TeamDashboardSnapshot::empty());
+    let entry: crate::cli::join_inbox::Entry = serde_json::from_value(serde_json::json!({
+        "status":"pending", "request": {"invitation_id":"invite", "team_id":"team", "created_at":1, "signature":"test",
+        "member":{"member_id":"developer", "display_name":"Grace", "role":"Implementer", "active":true},
+        "device":{"device_id":"device-test", "member_id":"developer", "public_key":"test", "active":true}}
+    })).unwrap();
+    d.join_inbox.entries = vec![entry.clone(), entry];
+    state.overlay = Some(ClientShellOverlay::TeamDashboard(d));
+    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Char('j'),
+        KeyModifiers::empty(),
+    ))]);
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    assert_eq!(d.join_inbox.cursor, 1);
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 106, 30));
+    render::render_client_overlay(
+        &mut buffer,
+        state.overlay.as_ref().unwrap(),
+        state.snapshot.as_deref().unwrap(),
+        &state.endpoints,
+        &state.active_endpoint_id,
+        &state.config.keybinds,
+        &state.config.palette,
+    )
+    .unwrap();
+    let text = buffer
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(text.contains("Grace"));
+    assert!(text.contains("a approve"));
+    assert!(text.contains("x reject"));
+    assert!(text.contains("requests (2)"));
 }
 
 #[test]

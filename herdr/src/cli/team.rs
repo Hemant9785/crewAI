@@ -18,7 +18,7 @@ pub(crate) struct InviteBundle {
     pub(crate) relay_token: String,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub(crate) struct JoinRequest {
     pub(crate) invitation_id: String,
     pub(crate) team_id: String,
@@ -48,6 +48,7 @@ pub(crate) fn run_team_command(args: &[String]) -> std::io::Result<i32> {
         Some("invite") => create_invite(&args[1..]),
         Some("join") => accept_invite(&args[1..]),
         Some("approve") => approve_member(&args[1..]),
+        Some("requests") => super::join_inbox::run(&args[1..]),
         Some("help" | "--help" | "-h") | None => {
             print_help();
             Ok(0)

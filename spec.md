@@ -15,7 +15,7 @@ The first usable version supports:
 - One team.
 - One device per teammate.
 - Explicit team invitation and device pairing.
-- A Herdr dashboard for local profile setup, team creation, copyable signed invite codes, pasted join-request approval, task assignment, broadcasts, local `/read`, and relay sync. Dashboard pairing uses clipboard codes and does not create JSON handoff files. The main workspace keeps Spaces and Agents visible beside the terminal and shows recent team tasks and broadcasts in a collapsible side panel.
+- A Herdr dashboard for local profile setup, team creation, six-digit invite codes, automatic signed join requests with dashboard approval/rejection, task assignment, broadcasts, local `/read`, and relay sync. Dashboard pairing uses clipboard codes and does not create JSON handoff files. The main workspace keeps Spaces and Agents visible beside the terminal and shows recent team tasks and broadcasts in a collapsible side panel.
 - Local profiles with display name and role label.
 - A linked local repository approved by its owner.
 - Tasks, task status updates, follow-ups, broadcasts, and activity history.
@@ -196,3 +196,7 @@ Every implementation task must include evidence appropriate to its scope:
 - Negative tests for unknown peers, invalid signatures, revoked grants, malformed events, and duplicate delivery.
 - Manual verification for the terminal workflow and two-device LAN behavior when hardware is available.
 - A documented limitation when a platform-specific security property cannot be verified.
+
+## Automatic join inbox (2026-11-22)
+
+Entering an invite in the dashboard sends the signed join request to a per-team relay inbox automatically. The manager dashboard polls for pending requests and provides approve/reject actions. Listing and decisions require an authority signature, requester status requires the requester signature, and decisions bind to the exact signed request to prevent replay against a later request. Approval continues through local invitation/signature checks and signed membership events. The relay inbox retains at most 100 device requests for up to seven days (expired rows are removed on access). This mailbox is bounded team pairing metadata; repository files and private keys are excluded. Legacy manual signed-request approval remains an optional compatibility path.

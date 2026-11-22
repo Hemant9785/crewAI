@@ -621,6 +621,35 @@ impl ClientShellState {
             if self.team_dashboard_form_key(key, outcome) {
                 return;
             }
+            let join_requests = matches!(self.overlay.as_ref(), Some(ClientShellOverlay::TeamDashboard(d))
+                if d.section == ClientTeamDashboardSection::Requests && !d.join_inbox.entries.is_empty());
+            if join_requests {
+                match key.code {
+                    KeyCode::Char('a') => {
+                        self.decide_selected_join(true);
+                        outcome.repaint = true;
+                        return;
+                    }
+                    KeyCode::Char('x') => {
+                        self.decide_selected_join(false);
+                        outcome.repaint = true;
+                        return;
+                    }
+                    KeyCode::Char('j') | KeyCode::Down | KeyCode::Char('k') | KeyCode::Up => {
+                        if let Some(ClientShellOverlay::TeamDashboard(d)) = self.overlay.as_mut() {
+                            if matches!(key.code, KeyCode::Char('j') | KeyCode::Down) {
+                                d.join_inbox.cursor =
+                                    (d.join_inbox.cursor + 1).min(d.join_inbox.entries.len() - 1);
+                            } else {
+                                d.join_inbox.cursor = d.join_inbox.cursor.saturating_sub(1);
+                            }
+                        }
+                        outcome.repaint = true;
+                        return;
+                    }
+                    _ => {}
+                }
+            }
             let task_section = matches!(
                 self.overlay.as_ref(),
                 Some(ClientShellOverlay::TeamDashboard(dashboard))
@@ -697,6 +726,14 @@ impl ClientShellState {
                     self.begin_team_dashboard_action(ClientTeamDashboardAction::Join)
                 }
                 KeyCode::Char('a') => {
+                    self.select_team_dashboard_section(3);
+                    if let Some(ClientShellOverlay::TeamDashboard(d)) = self.overlay.as_mut() {
+                        d.status = "Select a join request; a approves, x rejects.".into();
+                        d.join_inbox.next_poll = None;
+                    }
+                    outcome.repaint = true;
+                }
+                KeyCode::Char('A') => {
                     self.begin_team_dashboard_action(ClientTeamDashboardAction::Approve)
                 }
                 KeyCode::Char('t') => {
@@ -1111,16 +1148,26 @@ impl ClientShellState {
     }
 
     pub(super) fn open_team_dashboard(&mut self) {
+        let credentials = self
+            .relay_credential_sink
+            .as_ref()
+            .and_then(|sink| sink.get());
         self.overlay = Some(ClientShellOverlay::TeamDashboard(
             ClientTeamDashboardOverlay {
+                join_inbox: Default::default(),
                 section: ClientTeamDashboardSection::Teammates,
                 task_cursor: 0,
                 snapshot: crate::team_view::load_default().map_err(|error| error.to_string()),
                 form: None,
                 status: String::new(),
                 pending: None,
-                relay_url: std::env::var("HERDR_RELAY_URL").ok(),
-                relay_token: std::env::var("HERDR_RELAY_TOKEN").ok(),
+                relay_url: credentials
+                    .as_ref()
+                    .map(|c| c.0.clone())
+                    .or_else(|| std::env::var("HERDR_RELAY_URL").ok()),
+                relay_token: credentials
+                    .map(|c| c.1)
+                    .or_else(|| std::env::var("HERDR_RELAY_TOKEN").ok()),
                 share_code: None,
             },
         ));
@@ -1160,7 +1207,10 @@ impl ClientShellState {
                 return;
             }
             ClientTeamDashboardAction::Join => {
-                vec![("Invite code (6 digits or paste)".into(), TextEditor::default())]
+                vec![(
+                    "Invite code (6 digits or paste)".into(),
+                    TextEditor::default(),
+                )]
             }
             ClientTeamDashboardAction::Approve => {
                 vec![("Join request code (paste)".into(), TextEditor::default())]
@@ -1498,26 +1548,6 @@ impl ClientShellState {
                 actor = snapshot.profile.as_ref().map(|m| m.member_id.clone());
             }
         }
-        if action == Action::Join && !crate::cli::relay::is_short_invite_code(values[0].trim()) {
-            if let (Some(team_id), Some(authority_id)) = (team.as_ref(), authority.as_ref()) {
-                let bundle = crate::cli::team::decode_invite_code(&values[0])
-                    .map_err(|error| error.to_string())?;
-                crate::cli::team::validate_invite_for_existing_team(&bundle, team_id, authority_id)
-                    .map_err(|error| error.to_string())?;
-                if let Some(credential_sink) = self.relay_credential_sink.as_ref() {
-                    let _ =
-                        credential_sink.set(bundle.relay_url.clone(), bundle.relay_token.clone());
-                }
-                if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
-                    dashboard.relay_url = Some(bundle.relay_url);
-                    dashboard.relay_token = Some(bundle.relay_token);
-                    dashboard.status =
-                        "Invite verified. Background relay sync is ready; press s to sync now."
-                            .into();
-                }
-                return Ok(());
-            }
-        }
         if matches!(action, Action::Invite | Action::Join | Action::Approve) {
             let team_id = team;
             let (relay_url, relay_token) = match self.overlay.as_ref() {
@@ -1581,22 +1611,34 @@ impl ClientShellState {
                                     authority_id,
                                 )
                                 .map_err(|error| error.to_string())?;
+                                if let Some(request) = crate::cli::join_inbox::reconnect_request(
+                                    &database, &identity, &bundle,
+                                )? {
+                                    crate::cli::join_inbox::submit(
+                                        &bundle.relay_url,
+                                        &bundle.relay_token,
+                                        &request,
+                                    )?;
+                                    result.status = "Join request sent. Waiting for manager approval; see Requests.".into();
+                                } else {
+                                    result.status =
+                                        "Invite verified. Background relay sync is ready.".into();
+                                }
                                 result.relay_credentials =
                                     Some((bundle.relay_url, bundle.relay_token));
-                                result.status =
-                                    "Invite verified. Background relay sync is ready.".into();
                                 return Ok(());
                             }
                             let request = crate::cli::team::accept_invite_bundle(
                                 &database, &identity, &bundle,
                             )
                             .map_err(|error| error.to_string())?;
-                            result.share_code = Some(
-                                crate::cli::team::encode_join_code(&request)
-                                    .map_err(|error| error.to_string())?,
-                            );
+                            crate::cli::join_inbox::submit(
+                                &bundle.relay_url,
+                                &bundle.relay_token,
+                                &request,
+                            )?;
                             result.relay_credentials = Some((bundle.relay_url, bundle.relay_token));
-                            result.status = "Joined locally. Press y to copy your signed request code and send it privately to the manager.".into();
+                            result.status = "Join request sent automatically. Waiting for manager approval; see Requests.".into();
                         }
                         Action::Approve => {
                             let team_id =
@@ -1921,12 +1963,13 @@ impl ClientShellState {
     }
 
     pub(crate) fn tick_team_dashboard(&mut self) -> bool {
+        let inbox_changed = self.tick_join_inbox();
         let credential_sink = self.relay_credential_sink.clone();
         let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() else {
             return false;
         };
         let Some(receiver) = dashboard.pending.as_ref() else {
-            return false;
+            return inbox_changed;
         };
         match receiver.try_recv() {
             Ok(result) => {

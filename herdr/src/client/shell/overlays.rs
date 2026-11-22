@@ -200,7 +200,17 @@ fn render_team_dashboard_overlay(
     let tab_y = i.y.saturating_add(3);
     let mut tab_x = i.x;
     for (index, section) in ClientTeamDashboardSection::ALL.iter().enumerate() {
-        let label = format!(" {} {} ", index + 1, section.label());
+        let label = if *section == ClientTeamDashboardSection::Requests
+            && !dashboard.join_inbox.entries.is_empty()
+        {
+            format!(
+                " {} requests ({}) ",
+                index + 1,
+                dashboard.join_inbox.entries.len()
+            )
+        } else {
+            format!(" {} {} ", index + 1, section.label())
+        };
         let width = display_width(&label).min(i.right().saturating_sub(tab_x));
         if width == 0 {
             break;
@@ -368,6 +378,31 @@ fn render_team_dashboard_overlay(
                         }
                     }
                     ClientTeamDashboardSection::Requests => {
+                        lines.push("TEAM JOIN REQUESTS — j/k select, a approve, x reject".into());
+                        for (index, entry) in dashboard.join_inbox.entries.iter().enumerate() {
+                            lines.push(format!(
+                                "{} {} ({}) [{}]",
+                                if index == dashboard.join_inbox.cursor {
+                                    ">"
+                                } else {
+                                    " "
+                                },
+                                entry.request.member.display_name,
+                                role_label(&entry.request.member.role),
+                                entry.request.member.member_id
+                            ));
+                            lines.push(format!("  Device: {}", entry.request.device.device_id));
+                        }
+                        if let Some(status) = &dashboard.join_inbox.status {
+                            lines.push(format!("Your join request: {status}"));
+                        } else if dashboard.join_inbox.entries.is_empty() {
+                            lines.push("No pending join requests.".into());
+                        }
+                        if let Some(error) = &dashboard.join_inbox.error {
+                            lines.push(error.clone());
+                        }
+                        lines.push(String::new());
+                        lines.push("REPOSITORY REQUESTS".into());
                         if snapshot.requests.is_empty() {
                             lines.push("No requests recorded.".to_string());
                         } else {
@@ -471,11 +506,11 @@ fn render_team_dashboard_overlay(
         if dashboard.section == ClientTeamDashboardSection::Tasks {
             " j/k select  a accept  w work  d done  x cancel  ! attention  t assign  1-4 sections"
         } else if dashboard.section == ClientTeamDashboardSection::Requests {
-            " q ask teammate  r local /read  s sync  5 access  Esc close"
+            " j/k select  a approve join  x reject join  q ask teammate  s sync  Esc close"
         } else if dashboard.section == ClientTeamDashboardSection::Access {
             " 5 access  q ask teammate  1-4 other sections  Esc close"
         } else {
-            " p profile c team i invite n join a approve t task b message r local read q remote check s sync y copy"
+            " p profile c team i invite n join a requests t task b message r local read q remote check s sync y copy"
         },
         Style::default().fg(p.overlay0).bg(p.panel_bg),
     );
