@@ -108,6 +108,14 @@ The Access view is inspection-only. The current code has no signed, synchronized
 
 ## Known prototype limitations
 
+## Guided journey implementation
+
+- [ ] **2.0 Implement the approved complete guided journey.**
+  - Deliver reviewed items 1.15-1.18 as ordered integration components: approved-device relay access, task authorization/convergence, remembered team connections and safe switching, question consent/execution, guided UI and readable results.
+  - Name-only onboarding, optional project setup, visible Invite/Ask/Assign/Message actions, reliable selected-recipient behavior, task details/followups, readable messages/answers, draft retention, automatic refresh, actionable errors.
+  - Keep old data, existing terminal behavior, signatures, revocation, replay protection and execution isolation intact.
+  - Verify relevant backend and terminal flows, independent QA/review, then release Windows/Linux packages. No checkbox is complete until its behavior is verified.
+
 - Permission inspection is available; permission grant/revoke UI needs a signed synchronized domain command.
 - Agent-pane/task links reset when Herdr exits and are not shared with teammates.
 - A physical two-laptop Internet acceptance run remains outstanding.

@@ -1,5 +1,8 @@
 # Repository-local build and dependency caches
 .cache/
+.worktrees/
+*.connection.json
+*.active.json
 .tools/
 herdr/target/
 herdr/vendor/libghostty-vt/zig-pkg/
