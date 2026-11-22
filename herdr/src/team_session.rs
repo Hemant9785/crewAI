@@ -598,4 +598,42 @@ mod tests {
         assert_eq!(resolve_active_database(&db), db);
         assert!(activate_database(&db, &root.0.join("untrusted.sqlite")).is_err());
     }
+
+    #[test]
+    fn known_team_is_reused_only_with_its_pinned_authority() {
+        let root = Sandbox::new();
+        let db = root.db();
+        setup_profile(&db, "Teammate", Role::Implementer).unwrap();
+        let invite = bundle(&root);
+        let store = TeamStore::open(&db).unwrap();
+        store
+            .save_team(&Team {
+                team_id: invite.invitation.team_id.clone(),
+                name: invite.invitation.team_name.clone(),
+                authority_member_id: invite.invitation.authority_member_id.clone(),
+                created_at: now(),
+            })
+            .unwrap();
+        assert!(prepare_join_database(&db, &db, &invite, "New name").is_err());
+        store
+            .save_device(
+                &Device {
+                    device_id: invite.invitation.authority_device_id.clone(),
+                    member_id: invite.invitation.authority_member_id.clone(),
+                    public_key: invite.invitation.authority_public_key.clone(),
+                    active: true,
+                },
+                now(),
+            )
+            .unwrap();
+        assert_eq!(
+            prepare_join_database(&db, &db, &invite, "New name").unwrap(),
+            db
+        );
+        assert_eq!(
+            store.load_profile().unwrap().unwrap().member.display_name,
+            "Teammate"
+        );
+        assert_eq!(list_contexts(&db).unwrap(), vec![(db, "Friends".into())]);
+    }
 }
