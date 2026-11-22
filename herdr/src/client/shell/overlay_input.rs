@@ -618,6 +618,9 @@ impl ClientShellState {
         }
 
         if matches!(self.overlay, Some(ClientShellOverlay::TeamDashboard(_))) {
+            if self.guided_dashboard_key(key, outcome) {
+                return;
+            }
             if self.team_dashboard_form_key(key, outcome) {
                 return;
             }
@@ -1154,6 +1157,7 @@ impl ClientShellState {
             .and_then(|sink| sink.get());
         self.overlay = Some(ClientShellOverlay::TeamDashboard(
             ClientTeamDashboardOverlay {
+                guided: Default::default(),
                 join_inbox: Default::default(),
                 section: ClientTeamDashboardSection::Teammates,
                 task_cursor: 0,
@@ -1171,9 +1175,13 @@ impl ClientShellState {
                 share_code: None,
             },
         ));
+        self.restore_guided_connection();
     }
 
-    fn begin_team_dashboard_action(&mut self, action: ClientTeamDashboardAction) {
+    pub(super) fn begin_team_dashboard_action(&mut self, action: ClientTeamDashboardAction) {
+        if self.begin_guided_form(action) {
+            return;
+        }
         let repo_path = std::env::current_dir().unwrap_or_default();
         let repo_name = repo_path
             .file_name()
@@ -1190,6 +1198,13 @@ impl ClientShellState {
         }
         .unwrap_or_else(|| format!("member-{}", &crate::cli::team::generate_token()[..10]));
         let fields = match action {
+            ClientTeamDashboardAction::Ask
+            | ClientTeamDashboardAction::Project
+            | ClientTeamDashboardAction::AcceptInvite
+            | ClientTeamDashboardAction::SwitchTeam
+            | ClientTeamDashboardAction::TaskDetails
+            | ClientTeamDashboardAction::TaskFollowUp
+            | ClientTeamDashboardAction::MessageDetails => return,
             ClientTeamDashboardAction::Profile => vec![
                 ("Member ID".into(), TextEditor::new(&member_id, false)),
                 ("Your name".into(), TextEditor::default()),
@@ -1294,6 +1309,9 @@ impl ClientShellState {
         key: &crate::input::TerminalKey,
         outcome: &mut ClientShellInput,
     ) -> bool {
+        if self.guided_form_key(key, outcome) {
+            return true;
+        }
         let picking_task_members = matches!(
             self.overlay.as_ref(),
             Some(ClientShellOverlay::TeamDashboard(dashboard))
@@ -1490,7 +1508,7 @@ impl ClientShellState {
         true
     }
 
-    fn move_team_dashboard_task(&mut self, delta: isize) {
+    pub(super) fn move_team_dashboard_task(&mut self, delta: isize) {
         let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() else {
             return;
         };
@@ -1531,14 +1549,30 @@ impl ClientShellState {
         }
     }
 
-    fn start_team_dashboard_action(
+    pub(super) fn start_team_dashboard_action(
         &mut self,
         action: ClientTeamDashboardAction,
         values: Vec<String>,
     ) -> Result<(), String> {
+        if let Some(result) = self.start_guided_action(action, &values) {
+            return result;
+        }
         use ClientTeamDashboardAction as Action;
         if action == Action::CreateTeam {
+            if matches!(self.overlay.as_ref(),Some(ClientShellOverlay::TeamDashboard(d)) if d.snapshot.as_ref().ok().is_some_and(|s|!s.teams.is_empty()))
+            {
+                return Err("You already have a team here. Choose Invite to add a teammate or Switch team to open another saved team.".into());
+            }
             self.prepare_team_dashboard_relay();
+            if let Some(ClientShellOverlay::TeamDashboard(d)) = self.overlay.as_ref() {
+                if let (Some(url), Some(token)) = (&d.relay_url, &d.relay_token) {
+                    crate::team_session::save_connection(
+                        &crate::team_view::default_database_path(),
+                        url,
+                        token,
+                    )?;
+                }
+            }
         }
         let database = crate::team_view::default_database_path();
         let identity = database.with_file_name(format!(
@@ -1576,6 +1610,10 @@ impl ClientShellState {
             let (sender, receiver) = std::sync::mpsc::channel();
             std::thread::spawn(move || {
                 let mut result = ClientTeamDashboardResult {
+                    action: None,
+                    success: true,
+                    details: None,
+                    invite: None,
                     status: String::new(),
                     relay_credentials: None,
                     share_code: None,
@@ -1722,6 +1760,13 @@ impl ClientShellState {
             Vec::new()
         };
         let args = match action {
+            Action::Ask
+            | Action::Project
+            | Action::AcceptInvite
+            | Action::SwitchTeam
+            | Action::TaskDetails
+            | Action::TaskFollowUp
+            | Action::MessageDetails => return Err("Choose an action from the team home".into()),
             Action::Profile => vec![
                 "onboard".into(),
                 "setup".into(),
@@ -1903,6 +1948,10 @@ impl ClientShellState {
                 format!("Could not complete:\n{details}")
             };
             let completion = ClientTeamDashboardResult {
+                action: Some(action),
+                success: succeeded == command_count,
+                details: None,
+                invite: None,
                 status,
                 relay_credentials: if action == Action::CreateTeam {
                     relay_url.zip(relay_token)
@@ -1998,6 +2047,10 @@ impl ClientShellState {
                 Err(e) => format!("Sync failed: {e}"),
             };
             let _ = sender.send(ClientTeamDashboardResult {
+                action: None,
+                success: true,
+                details: None,
+                invite: None,
                 status,
                 relay_credentials: None,
                 share_code: None,
@@ -2010,19 +2063,47 @@ impl ClientShellState {
     }
 
     pub(crate) fn tick_team_dashboard(&mut self) -> bool {
+        let guided_changed = self.tick_guided_team();
         let inbox_changed = self.tick_join_inbox();
         let credential_sink = self.relay_credential_sink.clone();
         let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() else {
             return false;
         };
         let Some(receiver) = dashboard.pending.as_ref() else {
-            return inbox_changed;
+            return inbox_changed || guided_changed;
         };
         match receiver.try_recv() {
             Ok(result) => {
                 dashboard.pending = None;
+                if result.action == Some(ClientTeamDashboardAction::AcceptInvite) && result.success
+                {
+                    dashboard.join_inbox = Default::default();
+                }
+                if result.success {
+                    if let Some(action) = result.action {
+                        let _ = crate::team_session::save_draft(
+                            &crate::team_view::default_database_path(),
+                            super::guided_team::draft_kind(action),
+                            "",
+                        );
+                    }
+                }
+                if !result.success {
+                    dashboard.guided.next = None;
+                }
+                if let Some(invite) = result.invite {
+                    dashboard.guided.invite = Some(invite);
+                }
+                if let Some(body) = result.details {
+                    dashboard.guided.details = Some(("Result".into(), body, 0));
+                }
                 dashboard.status = result.status;
                 if let Some((url, token)) = result.relay_credentials {
+                    let _ = crate::team_session::save_connection(
+                        &crate::team_view::default_database_path(),
+                        &url,
+                        &token,
+                    );
                     if let Some(credential_sink) = credential_sink {
                         let _ = credential_sink.set(url.clone(), token.clone());
                     }

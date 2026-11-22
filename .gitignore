@@ -3,6 +3,7 @@
 .worktrees/
 *.connection.json
 *.active.json
+*.draft.json
 .tools/
 herdr/target/
 herdr/vendor/libghostty-vt/zig-pkg/

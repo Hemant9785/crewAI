@@ -2,6 +2,7 @@ use super::*;
 
 fn dashboard_without_database() -> ClientShellOverlay {
     ClientShellOverlay::TeamDashboard(ClientTeamDashboardOverlay {
+        guided: Default::default(),
         join_inbox: Default::default(),
         section: ClientTeamDashboardSection::Teammates,
         task_cursor: 0,
@@ -73,7 +74,7 @@ fn invite_digits_remain_visible_after_copy_request_on_every_dashboard_tab() {
             .iter()
             .map(|c| c.symbol())
             .collect::<String>();
-        assert!(text.contains("INVITE CODE: 123456"));
+        assert!(text.contains("Invite: 123456"));
     }
 }
 
@@ -147,27 +148,17 @@ fn team_creation_preserves_explicit_custom_relay_configuration() {
 }
 
 #[test]
-fn fresh_profile_form_has_a_unique_member_id() {
-    let mut ids = Vec::new();
-    for _ in 0..2 {
-        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
-        state.overlay = Some(dashboard_without_database());
-        state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
-            KeyCode::Char('p'),
-            KeyModifiers::empty(),
-        ))]);
-        let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
-            panic!("dashboard");
-        };
-        let id = d.form.as_ref().expect("profile form").fields[0]
-            .1
-            .as_str()
-            .to_owned();
-        assert_ne!(id, "member-1");
-        assert!(id.starts_with("member-"));
-        ids.push(id);
-    }
-    assert_ne!(ids[0], ids[1]);
+fn profile_onboarding_asks_for_name_only() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.overlay = Some(dashboard_without_database());
+    state.begin_team_dashboard_action(ClientTeamDashboardAction::Profile);
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    let form = d.form.as_ref().unwrap();
+    assert_eq!(form.fields.len(), 1);
+    assert_eq!(form.fields[0].0, "Your name");
+    assert!(form.fields[0].1.as_str().is_empty());
 }
 
 #[test]
@@ -194,7 +185,11 @@ fn join_inbox_renders_pending_member_and_decision_controls() {
         unreachable!()
     };
     d.section = ClientTeamDashboardSection::Requests;
-    d.snapshot = Ok(crate::team_view::TeamDashboardSnapshot::empty());
+    let mut joined = crate::team_view::TeamDashboardSnapshot::empty();
+    joined
+        .teams
+        .push(crate::team::Team::create("Test team", "manager", 1).unwrap());
+    d.snapshot = Ok(joined);
     let entry: crate::cli::join_inbox::Entry = serde_json::from_value(serde_json::json!({
         "status":"pending", "request": {"invitation_id":"invite", "team_id":"team", "created_at":1, "signature":"test",
         "member":{"member_id":"developer", "display_name":"Grace", "role":"Implementer", "active":true},
@@ -227,9 +222,9 @@ fn join_inbox_renders_pending_member_and_decision_controls() {
         .map(|c| c.symbol())
         .collect::<String>();
     assert!(text.contains("Grace"));
-    assert!(text.contains("a approve"));
-    assert!(text.contains("x reject"));
-    assert!(text.contains("requests (2)"));
+    assert!(text.contains("a Approve join"));
+    assert!(text.contains("x Reject join"));
+    assert!(text.contains("wants to join"));
 }
 
 #[test]
@@ -272,7 +267,7 @@ fn dashboard_join_form_is_a_modal_clipboard_paste_target() {
 }
 
 #[test]
-fn task_assignment_form_opens_multi_member_picker_and_toggles_selection() {
+fn task_assignment_enter_selects_highlighted_person_before_composing() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     let mut dashboard = match dashboard_without_database() {
         ClientShellOverlay::TeamDashboard(dashboard) => dashboard,
@@ -305,52 +300,22 @@ fn task_assignment_form_opens_multi_member_picker_and_toggles_selection() {
     });
     state.overlay = Some(ClientShellOverlay::TeamDashboard(dashboard));
 
-    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
-        KeyCode::Char('t'),
-        KeyModifiers::empty(),
-    ))]);
-    if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = state.overlay.as_mut() {
-        dashboard.form.as_mut().unwrap().fields[0].1 = TextEditor::new("Implement page", false);
-    }
+    state.begin_team_dashboard_action(ClientTeamDashboardAction::Task);
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    assert!(d.form.as_ref().unwrap().member_picker_active);
     state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
         KeyCode::Enter,
         KeyModifiers::empty(),
     ))]);
-    assert!(matches!(
-        state.overlay,
-        Some(ClientShellOverlay::TeamDashboard(
-            ClientTeamDashboardOverlay {
-                form: Some(ClientTeamDashboardForm {
-                    member_picker_active: true,
-                    ..
-                }),
-                ..
-            }
-        ))
-    ));
-
-    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
-        KeyCode::Char(' '),
-        KeyModifiers::empty(),
-    ))]);
-    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
-        KeyCode::Down,
-        KeyModifiers::empty(),
-    ))]);
-    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
-        KeyCode::Char(' '),
-        KeyModifiers::empty(),
-    ))]);
-    assert!(matches!(
-        state.overlay,
-        Some(ClientShellOverlay::TeamDashboard(ClientTeamDashboardOverlay {
-            form: Some(ClientTeamDashboardForm {
-                selected_member_ids,
-                ..
-            }),
-            ..
-        })) if selected_member_ids == vec!["member-a", "member-b"]
-    ));
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    let form = d.form.as_ref().unwrap();
+    assert!(!form.member_picker_active);
+    assert_eq!(form.selected_member_ids, vec!["member-a"]);
+    assert_eq!(form.fields.len(), 1);
 }
 
 #[test]
@@ -417,50 +382,19 @@ fn remote_check_form_separates_question_from_local_read_and_selects_one_target()
     dashboard.snapshot = Ok(snapshot);
     state.overlay = Some(ClientShellOverlay::TeamDashboard(dashboard));
 
-    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
-        KeyCode::Char('q'),
-        KeyModifiers::empty(),
-    ))]);
-    if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = state.overlay.as_mut() {
-        let form = dashboard.form.as_mut().unwrap();
-        form.fields[1].1 = TextEditor::new("Review the API", false);
-    }
+    state.begin_team_dashboard_action(ClientTeamDashboardAction::Check);
     state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
         KeyCode::Enter,
         KeyModifiers::empty(),
     ))]);
-    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
-        KeyCode::Enter,
-        KeyModifiers::empty(),
-    ))]);
-    assert!(matches!(
-        state.overlay,
-        Some(ClientShellOverlay::TeamDashboard(
-            ClientTeamDashboardOverlay {
-                form: Some(ClientTeamDashboardForm {
-                    action: ClientTeamDashboardAction::Check,
-                    member_picker_active: true,
-                    ..
-                }),
-                ..
-            }
-        ))
-    ));
-
-    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
-        KeyCode::Char(' '),
-        KeyModifiers::empty(),
-    ))]);
-    assert!(matches!(
-        state.overlay,
-        Some(ClientShellOverlay::TeamDashboard(ClientTeamDashboardOverlay {
-            form: Some(ClientTeamDashboardForm {
-                selected_member_ids,
-                ..
-            }),
-            ..
-        })) if selected_member_ids == vec!["member-b"]
-    ));
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    let form = d.form.as_ref().unwrap();
+    assert!(!form.member_picker_active);
+    assert_eq!(form.selected_member_ids, vec!["member-b"]);
+    assert_eq!(form.fields.len(), 1);
+    assert_eq!(form.fields[0].0, "Question");
 }
 
 #[test]
@@ -486,6 +420,9 @@ fn access_dashboard_renders_member_repository_grant_chain() {
             reason: "Allowed".into(),
             grant_chain: vec!["grant-manager-reader".into()],
         });
+    team_snapshot
+        .teams
+        .push(crate::team::Team::create("Test team", "manager", 1).unwrap());
     dashboard.section = ClientTeamDashboardSection::Access;
     dashboard.snapshot = Ok(team_snapshot);
     let overlay = ClientShellOverlay::TeamDashboard(dashboard);
@@ -505,9 +442,10 @@ fn access_dashboard_renders_member_repository_grant_chain() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
-    assert!(text.contains("access"));
-    assert!(text.contains("member-b"));
-    assert!(text.contains("grant-manager-reader"));
+    assert!(text.contains("Access"));
+    assert!(text.contains("Grace"));
+    assert!(text.contains("read repository"));
+    assert!(!text.contains("grant-manager-reader"));
 }
 
 #[test]
@@ -533,8 +471,37 @@ fn team_dashboard_renders_missing_database_without_creating_one() {
         .iter()
         .map(|cell| cell.symbol())
         .collect::<String>();
-    assert!(text.contains("Team dashboard"));
-    assert!(text.contains("Team data unavailable"));
-    assert!(text.contains("HERDR_TEAM_DB"));
+    assert!(text.contains("Welcome to your team workspace"));
+    assert!(text.contains("Create a team"));
+    assert!(text.contains("Join"));
     assert_eq!(rendered.primary, rendered.area);
+}
+
+#[test]
+fn dashboard_mouse_copy_and_close_use_keyboard_action_handler() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let ClientShellOverlay::TeamDashboard(mut dashboard) = dashboard_without_database() else {
+        unreachable!()
+    };
+    dashboard.share_code = Some("123456".into());
+    state.overlay = Some(ClientShellOverlay::TeamDashboard(dashboard));
+    state.hits.team_keys = vec![
+        (Rect::new(2, 2, 8, 1), 'y'),
+        (Rect::new(2, 3, 8, 1), '\u{1b}'),
+    ];
+    let click = |row| {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 3,
+            row,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+    let outcome = state.handle_raw_events(vec![click(2)]);
+    assert!(outcome
+        .actions
+        .iter()
+        .any(|a| matches!(a,ClientShellAction::ClipboardWrite(bytes) if bytes==b"123456")));
+    state.handle_raw_events(vec![click(3)]);
+    assert!(state.overlay.is_none());
 }

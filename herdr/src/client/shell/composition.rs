@@ -718,6 +718,8 @@ impl ClientShellState {
                 )?;
                 occlusion.cover(rendered.area);
                 self.hits.overlay_primary = rendered.primary;
+                self.hits.team_keys = rendered.team_keys;
+                self.hits.team_pick_rows = rendered.team_pick_rows;
                 self.hits.overlay_clear = rendered.clear;
                 self.hits.overlay_cancel = rendered.cancel;
                 self.hits.navigator_popup = rendered.navigator_popup;

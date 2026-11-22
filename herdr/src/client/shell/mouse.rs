@@ -683,6 +683,55 @@ impl ClientShellState {
     pub(super) fn handle_mouse(&mut self, mouse: MouseEvent, outcome: &mut ClientShellInput) {
         self.update_link_hover(mouse, outcome);
         let point = (mouse.column, mouse.row);
+        if self.overlay.is_none()
+            && mouse.kind == MouseEventKind::Down(MouseButton::Left)
+            && super::contains(self.hits.team_panel_dashboard, point)
+        {
+            self.open_team_dashboard();
+            outcome.repaint = true;
+            return;
+        }
+        if matches!(self.overlay, Some(ClientShellOverlay::TeamDashboard(_))) {
+            let mut code = match mouse.kind {
+                MouseEventKind::ScrollUp => Some(KeyCode::Up),
+                MouseEventKind::ScrollDown => Some(KeyCode::Down),
+                _ => None,
+            };
+            if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
+                if let Some((_, key)) = self
+                    .hits
+                    .team_keys
+                    .iter()
+                    .find(|(r, _)| r.contains((point.0, point.1).into()))
+                {
+                    code = Some(match *key {
+                        '\n' => KeyCode::Enter,
+                        '\x1b' => KeyCode::Esc,
+                        c => KeyCode::Char(c),
+                    });
+                }
+                if let Some((_, index)) = self
+                    .hits
+                    .team_pick_rows
+                    .iter()
+                    .find(|(r, _)| r.contains((point.0, point.1).into()))
+                {
+                    if let Some(ClientShellOverlay::TeamDashboard(d)) = self.overlay.as_mut() {
+                        if let Some(form) = d.form.as_mut() {
+                            form.member_cursor = *index;
+                            code = Some(KeyCode::Enter);
+                        }
+                    }
+                }
+            }
+            if let Some(code) = code {
+                let key =
+                    crate::input::TerminalKey::new(code, crossterm::event::KeyModifiers::empty());
+                self.route_overlay_key(&key, outcome);
+                outcome.repaint = true;
+            }
+            return;
+        }
         if self.mode == ClientShellMode::Navigate
             && self.workspace_preview_action_blocked()
             && self.overlay.is_none()

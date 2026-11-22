@@ -106,6 +106,7 @@ pub(super) struct ShellHitMap {
     pub(super) sidebar_section_divider: Rect,
     pub(super) sidebar_toggle: Rect,
     pub(super) team_panel_toggle: Rect,
+    pub(super) team_panel_dashboard: Rect,
     pub(super) team_panel_tasks: Rect,
     pub(super) team_panel_tasks_max_scroll: usize,
     pub(super) team_panel_task_links: Vec<(Rect, String, String)>,
@@ -126,6 +127,8 @@ pub(super) struct ShellHitMap {
     pub(super) context_menu_rows: Vec<(Rect, usize)>,
     pub(super) agent_task_picker_rows: Vec<(Rect, usize)>,
     pub(super) overlay_primary: Rect,
+    pub(super) team_keys: Vec<(Rect, char)>,
+    pub(super) team_pick_rows: Vec<(Rect, usize)>,
     pub(super) overlay_clear: Rect,
     pub(super) overlay_cancel: Rect,
     pub(super) navigator_popup: Rect,
@@ -431,6 +434,7 @@ impl ClientTeamDashboardSection {
 
 #[derive(Debug)]
 pub(super) struct ClientTeamDashboardOverlay {
+    pub(super) guided: ClientGuidedTeam,
     pub(super) join_inbox: ClientJoinInbox,
     pub(super) section: ClientTeamDashboardSection,
     pub(super) task_cursor: usize,
@@ -465,10 +469,44 @@ pub(super) struct ClientTeamDashboardResult {
     pub(super) status: String,
     pub(super) relay_credentials: Option<(String, String)>,
     pub(super) share_code: Option<String>,
+    pub(super) action: Option<ClientTeamDashboardAction>,
+    pub(super) success: bool,
+    pub(super) details: Option<String>,
+    pub(super) invite: Option<ClientPendingInvite>,
+}
+
+pub(super) struct ClientPendingInvite(pub(crate) crate::cli::team::InviteBundle);
+impl std::fmt::Debug for ClientPendingInvite {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Pending team invitation (credential hidden)")
+    }
+}
+
+#[derive(Debug, Default)]
+pub(super) struct ClientGuidedTeam {
+    pub next: Option<ClientTeamDashboardAction>,
+    pub details: Option<(String, String, usize)>,
+    pub person_cursor: usize,
+    pub message_cursor: usize,
+    pub question_cursor: usize,
+    pub questions: Vec<crate::cli::questions::Question>,
+    pub consent: Option<(String, String)>,
+    pub consent_scroll: usize,
+    pub refresh_at: Option<std::time::Instant>,
+    pub invite: Option<ClientPendingInvite>,
+    pub contexts: Vec<(std::path::PathBuf, String)>,
+    pub drafts: Vec<(ClientTeamDashboardAction, Vec<String>)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum ClientTeamDashboardAction {
+    Ask,
+    Project,
+    AcceptInvite,
+    SwitchTeam,
+    TaskDetails,
+    TaskFollowUp,
+    MessageDetails,
     Profile,
     CreateTeam,
     Invite,
@@ -494,6 +532,13 @@ pub(super) struct ClientTeamDashboardForm {
 impl ClientTeamDashboardAction {
     pub(super) fn label(self) -> &'static str {
         match self {
+            Self::Ask => "Ask a question",
+            Self::Project => "Connect a project (optional)",
+            Self::AcceptInvite => "Confirm team invitation",
+            Self::SwitchTeam => "Switch team (keep existing data)",
+            Self::TaskDetails => "Task details and history",
+            Self::TaskFollowUp => "Ask about this task",
+            Self::MessageDetails => "Read team message",
             Self::Profile => "Set up this device",
             Self::CreateTeam => "Create team",
             Self::Invite => "Create invite code",

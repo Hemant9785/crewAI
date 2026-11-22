@@ -106,8 +106,6 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Preserve legacy bundle privacy; verify dashboard regressions and publish release binaries.
   - **Completion note (2026-11-22):** The current six-digit invite stays in a fixed header on every dashboard tab, including after copy. Clipboard feedback now says Copy requested because terminal output is not browser clipboard acknowledgement. Legacy invite bundles are excluded from the header. Verification: 14 dashboard tests passed; Windows/Linux release v0.1.9 (`84e7712`, workflow `45027201054`) succeeded, downloaded SHA-256 hashes matched, released Windows binary passed the pairing/approval/rejection/status/task/broadcast smoke, and installed Windows reports v0.1.9. Linux release onboarding passed. Limitations: EC2 browser clipboard forwarding itself is not guaranteed, physical browser verification is pending, and manager restart recovery remains task 1.17. Review tasks 1.15-1.18 remain pending.
 
-## Known prototype limitations
-
 ## Guided journey implementation
 
 - [ ] **2.0 Implement the approved complete guided journey.**
@@ -116,7 +114,9 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Keep old data, existing terminal behavior, signatures, revocation, replay protection and execution isolation intact.
   - Verify relevant backend and terminal flows, independent QA/review, then release Windows/Linux packages. No checkbox is complete until its behavior is verified.
 
-- Permission inspection is available; permission grant/revoke UI needs a signed synchronized domain command.
+## Known prototype limitations
+
+- Permission inspection is available; a general permission grant/revoke UI is pending. Project questions have signed owner consent.
 - Agent-pane/task links reset when Herdr exits and are not shared with teammates.
 - A physical two-laptop Internet acceptance run remains outstanding.
 - Windows remote checks require explicit unisolated confirmation because an OS-enforced read-only boundary is unavailable.
@@ -124,3 +124,5 @@ The Access view is inspection-only. The current code has no signed, synchronized
 
 Release artifact smoke (2026-11-22): downloaded Windows v0.1.6 binary passed live isolated profile setup, signed short-invite lookup, duplicate-claim rejection, join, approval, and member relay sync. Windows package includes ConPTY runtime and licenses.
 
+
+- **Release progress (2026-11-22):** Integrated guided team home, name-only onboarding, protected remembered connections, safe team switching, recipient-first tasks/questions, task history/followups, scrollable messages/answers and limited-isolation owner consent. Relay now requires approved-device signed event access; deployed `84a58c7f-c22b-4169-ba85-d240f87892a7`. Connection tests 6/6, task authorization/convergence 3/3, sync/background filter 14/14, question permissions 5/5 and assistant helpers 3/3 passed. Independent review found mouse footer dispatch and clipped consent warnings; both corrected. Dashboard tests 15/15, storage tests 23/23 and opt-in native mock question/approval/answer roundtrip 1/1 passed. Final build and release verification in progress. Keep task 2.0 unchecked until independent UX acceptance, broader editing/revocation and contextual command polish are complete. Physical EC2/Windows acceptance remains unverified.

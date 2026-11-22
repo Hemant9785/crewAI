@@ -2,7 +2,7 @@
 //!
 //! Sync runs through the existing `relay sync` command in a child process so
 //! it never blocks terminal rendering or input. Relay credentials stay in the
-//! process environment and are never persisted or placed on the command line.
+//! process environment and an encrypted local session store, never command arguments.
 
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use tracing::{debug, warn};
 
-const BASE_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+const BASE_RETRY_INTERVAL: Duration = Duration::from_secs(5);
 const MAX_RETRY_INTERVAL: Duration = Duration::from_secs(5 * 60);
 const NO_CONFIGURATION_INTERVAL: Duration = Duration::from_secs(10);
 const CHILD_POLL_INTERVAL: Duration = Duration::from_millis(100);
@@ -100,12 +100,17 @@ impl Drop for BackgroundRelaySync {
 fn run_worker(
     stopped: Arc<AtomicBool>,
     executable: PathBuf,
-    database: PathBuf,
+    _database: PathBuf,
     credential_sink: RelayCredentialSink,
 ) {
     let mut retry_interval = BASE_RETRY_INTERVAL;
     while !stopped.load(Ordering::Acquire) {
-        let Some((endpoint, token)) = credential_sink.get().or_else(relay_configuration) else {
+        let database = crate::team_view::default_database_path();
+        let saved = crate::team_session::connection_from_env_or_store(&database)
+            .ok()
+            .flatten()
+            .map(|c| (c.endpoint, c.token));
+        let Some((endpoint, token)) = saved.or_else(relay_configuration) else {
             if wait_or_stop(&stopped, NO_CONFIGURATION_INTERVAL) {
                 break;
             }
@@ -257,7 +262,7 @@ mod tests {
     fn retry_interval_doubles_and_caps() {
         assert_eq!(
             next_retry_interval(BASE_RETRY_INTERVAL),
-            Duration::from_secs(60)
+            BASE_RETRY_INTERVAL.saturating_mul(2)
         );
         assert_eq!(next_retry_interval(MAX_RETRY_INTERVAL), MAX_RETRY_INTERVAL);
         assert_eq!(

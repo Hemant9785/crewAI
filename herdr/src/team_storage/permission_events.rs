@@ -416,6 +416,97 @@ mod tests {
             .is_empty());
     }
     #[test]
+    #[ignore = "requires HERDR_CODEX_PATH pointing to the release smoke assistant"]
+    fn question_answer_roundtrip_with_native_smoke_assistant() {
+        let (mut owner_store, owner, asker, repo) = setup();
+        publish(&mut owner_store, &owner, &repo);
+        let root = owner_store.path().parent().unwrap().to_path_buf();
+        owner_store
+            .save_profile(
+                &Member {
+                    member_id: "owner".into(),
+                    display_name: "Owner".into(),
+                    role: Role::Implementer,
+                    active: true,
+                },
+                1,
+                1,
+            )
+            .unwrap();
+        owner_store
+            .save_repository_approval(&RepositoryApproval {
+                repository_id: repo.clone(),
+                owner_member_id: "owner".into(),
+                local_path: root.to_string_lossy().into_owned(),
+                approved_at: 1,
+            })
+            .unwrap();
+        let mut peer = TeamStore::open(root.join("peer.sqlite")).unwrap();
+        peer.save_team(&owner_store.team("team").unwrap().unwrap())
+            .unwrap();
+        for (name, key) in [("owner", &owner), ("asker", &asker)] {
+            let member = Member {
+                member_id: name.into(),
+                display_name: name.into(),
+                role: Role::Implementer,
+                active: true,
+            };
+            peer.save_member("team", &member, 1).unwrap();
+            peer.save_device(
+                &Device {
+                    device_id: key.device_id().into(),
+                    member_id: name.into(),
+                    public_key: key.public_key(),
+                    active: true,
+                },
+                1,
+            )
+            .unwrap();
+            if name == "asker" {
+                peer.save_profile(&member, 1, 1).unwrap();
+            }
+        }
+        for e in owner_store.team_events("team", 100).unwrap() {
+            peer.insert_verified_event(&e, 10).unwrap();
+        }
+        let request = crate::cli::questions::ask(
+            peer.path(),
+            &root.join("asker.json"),
+            "team",
+            "owner",
+            &repo,
+            "Explain the smoke project",
+        )
+        .unwrap();
+        for e in peer.team_events("team", 100).unwrap() {
+            owner_store.insert_verified_event(&e, 11).unwrap();
+        }
+        let answer = crate::cli::questions::decide_and_run(
+            owner_store.path(),
+            &root.join("owner.json"),
+            "team",
+            &request,
+            crate::cli::questions::QuestionDecision::AllowOnce,
+            true,
+        )
+        .unwrap();
+        assert!(answer.contains("Smoke project answer"));
+        for e in owner_store.team_events("team", 100).unwrap() {
+            peer.insert_verified_event(&e, 12).unwrap();
+        }
+        let questions = crate::cli::questions::pending_questions(peer.path()).unwrap();
+        let completed = questions.iter().find(|q| q.request_id == request).unwrap();
+        assert!(completed
+            .result
+            .as_ref()
+            .unwrap()
+            .contains("Smoke project answer"));
+        assert_eq!(
+            peer.request(&request).unwrap().unwrap().delivery,
+            DeliveryState::Completed
+        );
+    }
+    #[test]
     fn consent_is_request_scoped_signed_and_revocable() {
         let (mut s, o, a, repo) = setup();
         publish(&mut s, &o, &repo);

@@ -4,7 +4,7 @@ crewAI is a terminal-first team coding assistant built on top of Herdr. It
 combines local team coordination, signed task and broadcast records,
 permission-aware repository requests, and bounded agent execution.
 
-> Status: this repository contains a runnable Internet collaboration prototype. The Cloudflare relay is deployed and its health endpoint responds; a physical two-laptop Internet run has not yet been performed. Relay sync is currently started manually.
+> Status: this repository contains a runnable Internet collaboration prototype. The Cloudflare relay is deployed and its health endpoint responds; a physical two-laptop Internet run has not yet been performed. Team sync runs in the background while Herdr is open; manual sync remains available.
 
 For the team setup, invitation, relay deployment, `/task`, `/brodcast`, and
 `/read` walkthrough, see [Internet team prototype](docs/internet-team.md).
@@ -122,15 +122,18 @@ Dashboard shortcuts:
 
 | Key | Action |
 | --- | --- |
-| `p` | Set up this device's profile and approved repository |
+| `p` | Enter or edit your display name; device identity is generated automatically |
 | `c` | Create the team |
 | `i` | Create a six-digit invite (10 minutes, one use); `y` copies it |
 | `n` | Type six digits or paste a legacy invite code |
 | `a` | Open join requests; in Requests, approve the selected teammate |
 | `x` | Reject the selected join request in Requests |
-| `t` | Enter a task description, then select one or more team members with `Space`; press `Enter` to assign |
+| `t` | Choose a teammate with Enter, write the task, then Enter to send |
 | `b` | Broadcast a team message |
-| `q` | Request a remote repository check from a teammate |
+| `/` | Ask this computer or a teammate about a connected project |
+| `q` | Ask a teammate about their project (remote shortcut) |
+| `o` | Connect an optional local project folder |
+| `g` | Switch between saved teams without deleting their data |
 | `r` | Ask Codex about this device's approved local repository |
 | `s` | Sync the team manually (also available as a fallback to background sync) |
 | `y` | Copy the current invite or join-request code |
@@ -141,25 +144,21 @@ it in progress, `d` to complete, `x` to cancel, and `!` to flag it for
 attention. Right-click an agent pane and choose **Link team task** to show its
 task in Agents; this pane-to-task link is local to the current Herdr session.
 
-Dashboard team creation configures the project relay automatically; no relay environment variables are needed for a fresh session. Keep the manager application open during testing: generated connection credentials are currently session-only and full manager restart recovery is not implemented.
+Choose **Create** or **Join** from Team home and enter your name when prompted. Team creation configures the Internet relay automatically. Connections are saved in authenticated encrypted local sidecars and restored on restart. Keep your local identity and database files together. On Linux the encryption key depends on an owner-only, unencrypted identity file; protect your OS account and backups.
 
 For a first teammate: press `i`, then `y` to share the six-digit invite privately.
 The six digits stay visible in the dashboard header. In an EC2/browser terminal, clipboard forwarding may not update your computer clipboard; type the visible digits manually if paste shows old content. A copy request is not a confirmation from the browser.
-The teammate sets up their profile with `p`, presses `n`, and enters the six digits.
+The teammate presses `n`, enters their name if needed, types the six digits, and confirms the team name. Existing teams stay saved.
 Their signed join request is sent automatically. On the manager dashboard, open
 **4 Requests**, select the teammate with `j`/`k`, then press `a` to approve or `x`
 to reject. The teammate sees pending, approved, or rejected status under Requests;
 background sync fetches approved membership. No return code or JSON file is needed.
 
-The relay operator can read temporary invitations and pairing metadata. Credentials
-stay in memory for the session. After a restart, ask for a fresh six-digit invite
-and use `n` to reconnect. Legacy manual approval remains available with capital `A`.
+The relay operator can read temporary invitations and pairing metadata. Pending or rejected invite holders cannot read team events. Update both devices for this release: event access now requires a signed approved-device proof. Legacy manual approval remains available with capital `A`.
 
 ## Initialize a local profile from the UI
 
-Press `p` in the Team Dashboard and enter a member ID, display name, role,
-repository ID, and local repository folder. This creates the local profile,
-device identity, and repository approval without copying repository contents.
+Press `p` to enter your name. Create/Join also asks for it automatically. IDs are generated internally; a repository and Codex are optional for team coordination. Press `o` when you want to connect a project folder. Repository files stay on this computer.
 The CLI form below remains available for scripted setup.
 
 ```powershell
@@ -189,8 +188,8 @@ The supported roles are `manager`, `group-head`, `part-head`, and
 ## Implemented prototype
 
 - Create a team, issue an invitation, join from another laptop, and approve
-  the signed join request code.
-- Assign signed tasks to one or several selected teammates, update task status
+  the automatically delivered join request in Requests.
+- Assign signed tasks to a selected teammate, update task status
   from the dashboard, and see completion announcements in team activity.
 - Browse newest-first task and broadcast feeds, link local agent panes to tasks,
   inspect permission decisions, and create remote `/check` requests in Herdr.
@@ -202,11 +201,19 @@ The supported roles are `manager`, `group-head`, `part-head`, and
 - Keep repository files, SQLite data, and private keys on their owning device.
   The relay stores bounded team events and delivery metadata.
 - Background relay sync starts after invite/join/approval when relay credentials
-  are available in the Herdr session. Manual sync remains available in the
+  are restored from the protected local connection store. Manual sync remains available in the
   dashboard.
 
 See [the Internet team walkthrough](docs/internet-team.md) for deployment,
 setup, invitation, and command examples.
+
+## Asking project questions
+
+Press `/`, choose **This computer** or an approved teammate, then write your question. The project owner connects their folder with `o`. An EC2 manager can coordinate tasks/messages and ask the Windows implementer's project without installing Codex on EC2.
+
+Remote questions appear in **4 Requests**. Use `[` / `]` to select a question and Enter to review it. The owner can allow once, allow the project, or deny. Execution requires a separate explicit limited-isolation choice; use Up/Down to read the warning. A completed answer is saved under Requests; Enter opens the scrollable result. Codex CLI must be installed and signed in on the computer answering the question. An existing Codex conversation alone is insufficient.
+
+In **Tasks**, Enter opens history and `f` adds a follow-up. In **Messages**, Enter reads the full message. Drafts survive cancellation. Saved/queued feedback means the event is waiting for synchronization, not proof that an offline person has seen it.
 
 ## Pending work and known limits
 

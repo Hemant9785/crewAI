@@ -34,6 +34,7 @@ pub(super) fn render_team_panel(
     hits.team_panel_activity = Rect::default();
     hits.team_panel_activity_max_scroll = 0;
     hits.team_panel_composer = Rect::default();
+    hits.team_panel_dashboard = Rect::default();
     if area.is_empty() {
         return;
     }
@@ -57,7 +58,8 @@ pub(super) fn render_team_panel(
         return;
     }
 
-    put(buffer, x, area.y, width, "TEAM", accent);
+    put(buffer, x, area.y, width, "TEAM  [Open dashboard]", accent);
+    hits.team_panel_dashboard = Rect::new(x, area.y, width, 1);
     match snapshot {
         Err(_) => {
             put(
@@ -85,7 +87,7 @@ pub(super) fn render_team_panel(
                     .iter()
                     .filter(|member| member.active)
                     .count();
-                let summary = format!("{active} active member(s)");
+                let summary = format!("{active} approved member(s)");
                 put(buffer, x, area.y.saturating_add(2), width, &summary, muted);
             } else {
                 put(
@@ -410,6 +412,7 @@ impl ClientShellState {
                     self.team_panel_send_pending = None;
                     if result.is_ok() {
                         self.team_panel_activity_scroll = 0;
+                        self.team_panel_composer.clear();
                     }
                     self.team_panel_status = Some(match result {
                         Ok(()) => {
@@ -499,7 +502,6 @@ impl ClientShellState {
             message,
             sender,
         );
-        self.team_panel_composer.clear();
         self.team_panel_status = Some("Recording broadcast...".into());
         self.team_panel_send_pending = Some(receiver);
     }

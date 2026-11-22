@@ -120,6 +120,10 @@ impl ClientShellState {
                 Err(e) => format!("Could not complete: {e}"),
             };
             let _ = sender.send(ClientTeamDashboardResult {
+                action: None,
+                success: true,
+                details: None,
+                invite: None,
                 status,
                 relay_credentials: None,
                 share_code: None,

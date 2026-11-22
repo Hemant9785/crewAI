@@ -5,6 +5,8 @@ mod worktree_overlays;
 
 #[derive(Default)]
 pub(crate) struct OverlayRender {
+    pub(crate) team_keys: Vec<(Rect, char)>,
+    pub(crate) team_pick_rows: Vec<(Rect, usize)>,
     pub(crate) area: Rect,
     pub(crate) menu_rows: Vec<(Rect, usize)>,
     pub(crate) primary: Rect,
@@ -169,34 +171,60 @@ fn render_team_dashboard_overlay(
     dashboard: &ClientTeamDashboardOverlay,
     p: &Palette,
 ) -> Option<OverlayRender> {
-    let q = popup(b.area, 86, 24)?;
+    use ratatui::widgets::{Paragraph, Widget, Wrap};
+    use ClientTeamDashboardAction as A;
+    let mut team_keys = Vec::new();
+    let mut pick_lines = Vec::new();
+    let home_actions = " c Create  n Join  / Ask  t Assign  b Message  i Invite";
+    let q = popup(b.area, 90, 28)?;
     let i = panel(b, q, p.accent, p.panel_bg)?;
-    if i.width < 28 || i.height < 8 {
+    if i.width < 28 || i.height < 10 {
         return Some(OverlayRender {
             area: q,
             primary: q,
             ..OverlayRender::default()
         });
     }
-
     let base = Style::default().fg(p.text).bg(p.panel_bg);
+    let muted = base.fg(p.overlay0);
+    let snapshot = dashboard.snapshot.as_ref().ok();
+    let team = snapshot.and_then(|s| s.teams.first());
+    let profile = snapshot.and_then(|s| s.profile.as_ref());
+    let title = team
+        .map(|t| format!(" {} | Team home", t.name))
+        .unwrap_or_else(|| " Welcome to your team workspace".into());
     put_text(
         b,
         i.x,
         i.y,
         i.width,
-        " Team dashboard · manage your team here",
+        &title,
         base.add_modifier(Modifier::BOLD),
     );
-    put_text(
-        b,
-        i.x,
-        i.y.saturating_add(1),
-        i.width,
-        " Team, members, tasks, messages, and local Codex",
-        Style::default().fg(p.overlay0).bg(p.panel_bg),
-    );
-
+    let subtitle = profile
+        .map(|person| {
+            format!(
+                " {} | {} | {}",
+                person.display_name,
+                role_label(&person.role),
+                if dashboard.relay_token.is_some() {
+                    "Connection saved on this device"
+                } else {
+                    "Create or join a team to connect"
+                }
+            )
+        })
+        .unwrap_or_else(|| {
+            " Create a team or join with a six-digit code. Start with just your name.".into()
+        });
+    put_text(b, i.x, i.y + 1, i.width, &subtitle, muted);
+    if dashboard.form.is_none()
+        && dashboard.guided.details.is_none()
+        && dashboard.guided.invite.is_none()
+        && dashboard.guided.consent.is_none()
+    {
+        put_text(b, i.x, i.y + 2, i.width, home_actions, base.fg(p.accent));
+    }
     if let Some(code) = dashboard
         .share_code
         .as_deref()
@@ -205,117 +233,187 @@ fn render_team_dashboard_overlay(
         put_text(
             b,
             i.x,
-            i.y.saturating_add(2),
+            i.y + 2,
             i.width,
-            &format!(" INVITE CODE: {code}  (10 minutes, one use)  y: request copy"),
-            Style::default()
-                .fg(p.accent)
-                .bg(p.panel_bg)
-                .add_modifier(Modifier::BOLD),
+            &format!(
+                " Invite: {code}  |  Share with your teammate  |  10 minutes, one use  |  y Copy"
+            ),
+            base.fg(p.accent).add_modifier(Modifier::BOLD),
         );
+        if let Some(start) = format!(
+            " Invite: {code}  |  Share with your teammate  |  10 minutes, one use  |  y Copy"
+        )
+        .find("y Copy")
+        {
+            let x = u16::try_from(start).unwrap_or(u16::MAX);
+            let width = 6.min(i.width.saturating_sub(x));
+            if width > 0 {
+                team_keys.push((Rect::new(i.x + x, i.y + 2, width, 1), 'y'));
+            }
+        }
     }
-    let tab_y = i.y.saturating_add(3);
+    let tab_y = i.y + 3;
     let mut tab_x = i.x;
     for (index, section) in ClientTeamDashboardSection::ALL.iter().enumerate() {
-        let label = if *section == ClientTeamDashboardSection::Requests
-            && !dashboard.join_inbox.entries.is_empty()
-        {
-            format!(
-                " {} requests ({}) ",
-                index + 1,
-                dashboard.join_inbox.entries.len()
-            )
-        } else {
-            format!(" {} {} ", index + 1, section.label())
+        let name = match section {
+            ClientTeamDashboardSection::Teammates => "People",
+            ClientTeamDashboardSection::Tasks => "Tasks",
+            ClientTeamDashboardSection::Broadcast => "Messages",
+            ClientTeamDashboardSection::Requests => "Requests",
+            ClientTeamDashboardSection::Access => "Access",
         };
+        let label = format!(" {} {} ", index + 1, name);
         let width = display_width(&label).min(i.right().saturating_sub(tab_x));
         if width == 0 {
             break;
         }
         let style = if *section == dashboard.section {
-            Style::default()
-                .fg(panel_contrast_fg(p))
+            base.fg(panel_contrast_fg(p))
                 .bg(p.accent)
                 .add_modifier(Modifier::BOLD)
         } else {
-            base
+            muted
         };
         put_text(b, tab_x, tab_y, width, &label, style);
+        team_keys.push((
+            Rect::new(tab_x, tab_y, width, 1),
+            char::from(b'1' + index as u8),
+        ));
         tab_x = tab_x.saturating_add(width).saturating_add(1);
     }
-
-    let content_y = tab_y.saturating_add(2);
-    let content_height = i.bottom().saturating_sub(content_y.saturating_add(2));
-    let content = Rect::new(i.x, content_y, i.width, content_height);
-    let mut lines = Vec::new();
-    if let Some(form) = &dashboard.form {
-        lines.push(form.action.label().to_string());
-        if matches!(
-            form.action,
-            ClientTeamDashboardAction::Task | ClientTeamDashboardAction::Check
-        ) && form.member_picker_active
-        {
-            let is_check = form.action == ClientTeamDashboardAction::Check;
-            let context = if is_check {
-                form.fields
-                    .get(1)
-                    .map(|(_, editor)| format!("Question: {}", editor.as_str()))
-                    .unwrap_or_default()
-            } else {
-                form.fields
-                    .first()
-                    .map(|(_, editor)| format!("Task: {}", editor.as_str()))
-                    .unwrap_or_default()
-            };
-            lines.push(context);
-            lines.push(if is_check {
-                "Space selects one  Enter sends check request  Esc cancels".into()
-            } else {
-                "Space selects  Enter assigns  Esc cancels".into()
-            });
-            if let Ok(snapshot) = &dashboard.snapshot {
-                let members = snapshot
-                    .teammates
-                    .iter()
-                    .filter(|member| member.active)
-                    .collect::<Vec<_>>();
-                let capacity =
-                    usize::from(content.height.saturating_sub(lines.len() as u16)).max(1);
-                let start = form
-                    .member_cursor
-                    .saturating_sub(capacity.saturating_sub(1));
-                for (index, member) in members.iter().enumerate().skip(start).take(capacity) {
-                    let selected = form
-                        .selected_member_ids
-                        .iter()
-                        .any(|id| id == &member.member_id);
-                    lines.push(format!(
-                        "{} [{}] {} ({})",
-                        if index == form.member_cursor {
-                            ">"
-                        } else {
-                            " "
-                        },
-                        if selected { "x" } else { " " },
-                        member.display_name,
-                        role_label(&member.role)
-                    ));
-                }
-                if members.is_empty() {
-                    lines.push(if is_check {
-                        "No active teammates to ask.".into()
+    let content = Rect::new(
+        i.x,
+        tab_y + 2,
+        i.width,
+        i.bottom().saturating_sub(tab_y + 7),
+    );
+    let mut lines: Vec<String> = Vec::new();
+    let mut scroll = 0usize;
+    let mut footer = " c Create  n Join  / Ask  t Assign  b Message  i Invite".to_string();
+    let mut secondary =
+        " o Connect project  g Switch team  p Edit name  1-5 Views  Esc Close".to_string();
+    if let Some((title, body, offset)) = &dashboard.guided.details {
+        lines.push(title.clone());
+        lines.push(String::new());
+        lines.extend(body.lines().map(str::to_owned));
+        scroll = *offset;
+        footer = " Up/Down or mouse wheel Scroll  PgUp/PgDn Page".into();
+        secondary = " Esc Back to team home".into();
+    } else if let Some((_, warning)) = &dashboard.guided.consent {
+        scroll = dashboard.guided.consent_scroll;
+        lines.push("Allow this project question?".into());
+        lines.push(String::new());
+        lines.extend(warning.lines().map(str::to_owned));
+        lines.push(String::new());
+        lines.push("1  Allow once with limited isolation".into());
+        lines.push("2  Allow this project with limited isolation".into());
+        lines.push("x  Deny".into());
+        footer = " 1 Allow once  2 Allow this project  x Deny".into();
+        secondary = " Up/Down Scroll warning  Esc Back without allowing execution".into();
+        team_keys.clear();
+    } else if let Some(invite) = &dashboard.guided.invite {
+        lines.push(format!("Join {}?", invite.0.invitation.team_name));
+        lines.push(String::new());
+        lines.push("You will join as a teammate. The manager approves your request.".into());
+        lines.push(
+            "Your existing teams, profiles, tasks, and messages stay saved on this device.".into(),
+        );
+        lines.push("You can switch between teams from the team home.".into());
+        footer = " Enter Join this team".into();
+        secondary = " Esc Cancel and keep your current team".into();
+    } else if let Some(form) = &dashboard.form {
+        lines.push(
+            match form.action {
+                A::Profile => "What should your teammates call you?",
+                A::Broadcast => "Message your team",
+                A::Join => "Enter your teammate's invite code",
+                _ => form.action.label(),
+            }
+            .into(),
+        );
+        lines.push(String::new());
+        if form.action == A::SwitchTeam {
+            lines.push("Choose a team. Your other teams remain saved.".into());
+            let capacity = usize::from(content.height.saturating_sub(4)).max(1);
+            let start = form
+                .member_cursor
+                .saturating_sub(capacity.saturating_sub(1));
+            for (index, (_, name)) in dashboard
+                .guided
+                .contexts
+                .iter()
+                .enumerate()
+                .skip(start)
+                .take(capacity)
+            {
+                pick_lines.push((lines.len(), index));
+                lines.push(format!(
+                    "{} {}",
+                    if index == form.member_cursor {
+                        ">"
                     } else {
-                        "No active teammates to assign to.".into()
-                    });
+                        " "
+                    },
+                    name
+                ));
+            }
+            if dashboard.guided.contexts.is_empty() {
+                lines.push("No saved teams yet. Create or join your first team.".into());
+            }
+            footer = " Up/Down Choose team  Enter Switch".into();
+            secondary = " Esc Cancel".into();
+        } else if form.member_picker_active && matches!(form.action, A::Task | A::Ask | A::Check) {
+            lines.push(
+                if form.action == A::Task {
+                    "Who should receive this task?"
+                } else {
+                    "Whose project do you want to ask about?"
                 }
+                .into(),
+            );
+            let members = super::guided_team::guided_recipients(snapshot, form.action);
+            let capacity = usize::from(content.height.saturating_sub(4)).max(1);
+            let start = form
+                .member_cursor
+                .saturating_sub(capacity.saturating_sub(1));
+            for (index, (_, name)) in members.iter().enumerate().skip(start).take(capacity) {
+                pick_lines.push((lines.len(), index));
+                lines.push(format!(
+                    "{} {}",
+                    if index == form.member_cursor {
+                        ">"
+                    } else {
+                        " "
+                    },
+                    name
+                ));
             }
-            if !dashboard.status.is_empty() {
-                lines.push(String::new());
-                lines.push(dashboard.status.clone());
+            if members.is_empty() {
+                lines.push("Invite a teammate first. Approved teammates can receive queued work while offline.".into());
             }
+            footer = " Up/Down Choose person  Enter Continue".into();
+            secondary = " Esc Cancel; your draft stays saved".into();
         } else {
-            lines.push("Type a value and press Enter; Esc cancels.".into());
-            lines.push(String::new());
+            if form.action == A::Profile {
+                lines.push("Your device identity is created automatically. No project or assistant setup needed.".into());
+            }
+            if form.action == A::Project {
+                lines.push("Optional: choose a local folder for project questions. Its files stay on this device.".into());
+            }
+            if form.action == A::Broadcast {
+                lines.push(
+                    "To everyone in this team. Offline devices receive it when they reconnect."
+                        .into(),
+                );
+            }
+            if let Some(target) = form.selected_member_ids.first() {
+                let name = super::guided_team::guided_recipients(snapshot, form.action)
+                    .into_iter()
+                    .find(|(id, _)| id == target)
+                    .map(|(_, name)| name)
+                    .unwrap_or_else(|| "Selected teammate".into());
+                lines.push(format!("To: {name}"));
+            }
             for (index, (label, editor)) in form.fields.iter().enumerate() {
                 lines.push(format!(
                     "{} {label}: {}",
@@ -323,217 +421,338 @@ fn render_team_dashboard_overlay(
                     editor.as_str()
                 ));
             }
-        }
-    } else {
-        match &dashboard.snapshot {
-            Err(error) => {
-                lines.push("Team data unavailable".to_string());
-                lines.push(error.clone());
-                lines.push("Press p to set up this device in Herdr.".to_string());
-            }
-            Ok(snapshot) => {
-                if let Some(profile) = snapshot.profile.as_ref() {
-                    lines.push(format!(
-                        "Signed-in profile: {} ({})",
-                        profile.display_name,
-                        role_label(&profile.role)
-                    ));
-                } else {
-                    lines.push("Signed-in profile: not configured".to_string());
+            footer = match form.action {
+                A::Profile => " Enter Save name and continue",
+                A::Project => " Enter Connect this project",
+                A::Task | A::Broadcast | A::Ask | A::Read | A::Check | A::TaskFollowUp => {
+                    " Enter Send"
                 }
-                if let Some(team) = snapshot.teams.first() {
-                    lines.push(format!("Team: {}", team.name));
+                _ => " Enter Continue",
+            }
+            .into();
+            secondary = " Paste with your terminal's paste shortcut  Esc Cancel".into();
+        }
+    } else if team.is_none() {
+        lines.push("Work together from one terminal".into());
+        lines.push(String::new());
+        lines.push("c  Create a team | give it a name, then share an invite code.".into());
+        lines.push("n  Join a team | enter the six-digit code your teammate shared.".into());
+        lines.push(String::new());
+        lines.push("Task assignment and messages work without a repository or Codex.".into());
+        lines.push("Connect a project later when you want to ask project questions.".into());
+        if snapshot.is_none() {
+            lines.push("Your local profile will be set up when you create or join.".into());
+        }
+    } else if let Some(snapshot) = snapshot {
+        let person = |id: &str| {
+            snapshot
+                .teammates
+                .iter()
+                .find(|m| m.member_id == id)
+                .map(|m| m.display_name.as_str())
+                .or_else(|| {
+                    snapshot
+                        .profile
+                        .as_ref()
+                        .filter(|m| m.member_id == id)
+                        .map(|m| m.display_name.as_str())
+                })
+                .unwrap_or("Teammate")
+                .to_string()
+        };
+        match dashboard.section {
+            ClientTeamDashboardSection::Teammates => {
+                lines.push(format!(
+                    "{} approved teammate(s)",
+                    snapshot.teammates.iter().filter(|m| m.active).count()
+                ));
+                lines.push(String::new());
+                for member in &snapshot.teammates {
+                    lines.push(format!(
+                        "{} | {} | {}",
+                        member.display_name,
+                        role_label(&member.role),
+                        if member.active {
+                            "approved"
+                        } else {
+                            "inactive"
+                        }
+                    ));
                 }
                 lines.push(String::new());
-                match dashboard.section {
-                    ClientTeamDashboardSection::Teammates => {
-                        if snapshot.teammates.is_empty() {
-                            lines.push("No teammates recorded.".to_string());
+                lines.push(
+                    "i  Invite a teammate with a six-digit code. Approve them in Requests.".into(),
+                );
+                lines.push("/  Ask a question    t  Assign a task    b  Message everyone".into());
+            }
+            ClientTeamDashboardSection::Tasks => {
+                if snapshot.tasks.is_empty() {
+                    lines.push(
+                        "No tasks yet. Press t to choose a teammate and assign your first task."
+                            .into(),
+                    );
+                }
+                let capacity = usize::from(content.height.saturating_sub(2)).max(1);
+                let start = dashboard
+                    .task_cursor
+                    .saturating_sub(capacity.saturating_sub(1));
+                for (index, task) in snapshot.tasks.iter().enumerate().skip(start).take(capacity) {
+                    lines.push(format!(
+                        "{} [{}] {} | {} | {}",
+                        if index == dashboard.task_cursor {
+                            ">"
                         } else {
-                            lines.extend(snapshot.teammates.iter().map(|member| {
-                                format!(
-                                    "{}  [{}]  {}  {}",
-                                    member.display_name,
-                                    member.member_id,
-                                    role_label(&member.role),
-                                    if member.active { "active" } else { "inactive" }
-                                )
-                            }));
-                        }
-                    }
-                    ClientTeamDashboardSection::Tasks => {
-                        if snapshot.tasks.is_empty() {
-                            lines.push("No tasks recorded.".to_string());
+                            " "
+                        },
+                        task_status_label(&task.status),
+                        bounded_preview(&task.description, 100),
+                        person(&task.assigner_member_id),
+                        person(&task.assignee_member_id)
+                    ));
+                }
+                footer =
+                    " Enter Details  a Accept  w Start  d Done  x Cancel  ! Need help  f Follow up"
+                        .into();
+            }
+            ClientTeamDashboardSection::Broadcast => {
+                if snapshot.broadcasts.is_empty() {
+                    lines.push("No team messages yet. Press b to write to everyone.".into());
+                }
+                let capacity = usize::from(content.height.saturating_sub(2)).max(1);
+                let start = dashboard
+                    .guided
+                    .message_cursor
+                    .saturating_sub(capacity.saturating_sub(1));
+                for (index, message) in snapshot
+                    .broadcasts
+                    .iter()
+                    .enumerate()
+                    .skip(start)
+                    .take(capacity)
+                {
+                    lines.push(format!(
+                        "{} {}: {}",
+                        if index == dashboard.guided.message_cursor {
+                            ">"
                         } else {
-                            lines.extend(snapshot.tasks.iter().enumerate().map(|(index, task)| {
-                                format!(
-                                    "{}{}  {}  {} -> {}  {}",
-                                    if index == dashboard.task_cursor {
-                                        "> "
-                                    } else {
-                                        "  "
-                                    },
-                                    task.task_id,
-                                    task_status_label(&task.status),
-                                    task.assigner_member_id,
-                                    task.assignee_member_id,
-                                    task.description
-                                )
-                            }));
-                        }
-                    }
-                    ClientTeamDashboardSection::Broadcast => {
-                        if snapshot.broadcasts.is_empty() {
-                            lines.push("No broadcasts recorded.".to_string());
+                            " "
+                        },
+                        person(&message.sender_member_id),
+                        bounded_preview(&message.message, 100)
+                    ));
+                }
+                footer =
+                    " Up/Down Choose message  Enter Read full message  b Message everyone".into();
+            }
+            ClientTeamDashboardSection::Requests => {
+                lines.push("Team join requests".into());
+                for (index, entry) in dashboard.join_inbox.entries.iter().enumerate() {
+                    lines.push(format!(
+                        "{} {} wants to join | {}",
+                        if index == dashboard.join_inbox.cursor {
+                            ">"
                         } else {
-                            lines.extend(snapshot.broadcasts.iter().map(|broadcast| {
-                                format!(
-                                    "{}  {}  {}",
-                                    broadcast.scope, broadcast.sender_member_id, broadcast.message
-                                )
-                            }));
-                        }
-                    }
-                    ClientTeamDashboardSection::Requests => {
-                        lines.push("TEAM JOIN REQUESTS — j/k select, a approve, x reject".into());
-                        for (index, entry) in dashboard.join_inbox.entries.iter().enumerate() {
-                            lines.push(format!(
-                                "{} {} ({}) [{}]",
-                                if index == dashboard.join_inbox.cursor {
-                                    ">"
-                                } else {
-                                    " "
-                                },
-                                entry.request.member.display_name,
-                                role_label(&entry.request.member.role),
-                                entry.request.member.member_id
-                            ));
-                            lines.push(format!("  Device: {}", entry.request.device.device_id));
-                        }
-                        if let Some(status) = &dashboard.join_inbox.status {
-                            lines.push(format!("Your join request: {status}"));
-                        } else if dashboard.join_inbox.entries.is_empty() {
-                            lines.push("No pending join requests.".into());
-                        }
-                        if let Some(error) = &dashboard.join_inbox.error {
-                            lines.push(error.clone());
-                        }
-                        lines.push(String::new());
-                        lines.push("REPOSITORY REQUESTS".into());
-                        if snapshot.requests.is_empty() {
-                            lines.push("No requests recorded.".to_string());
+                            " "
+                        },
+                        entry.request.member.display_name,
+                        role_label(&entry.request.member.role)
+                    ));
+                }
+                if let Some(status) = &dashboard.join_inbox.status {
+                    lines.push(format!("Your join request: {status}"));
+                }
+                if dashboard.join_inbox.entries.is_empty() {
+                    lines.push("No teammates waiting to join.".into());
+                }
+                if let Some(error) = &dashboard.join_inbox.error {
+                    lines.push(error.clone());
+                }
+                lines.push(String::new());
+                lines.push("Project questions".into());
+                let question_capacity =
+                    usize::from(content.height.saturating_sub(lines.len() as u16))
+                        .saturating_div(3)
+                        .max(1);
+                let question_start = dashboard
+                    .guided
+                    .question_cursor
+                    .saturating_sub(question_capacity.saturating_sub(1));
+                for (index, question) in dashboard
+                    .guided
+                    .questions
+                    .iter()
+                    .enumerate()
+                    .skip(question_start)
+                    .take(question_capacity)
+                {
+                    lines.push(format!(
+                        "{} {} | {} | {} | {}",
+                        if index == dashboard.guided.question_cursor {
+                            ">"
                         } else {
-                            for request in snapshot.requests.iter().rev() {
-                                lines.push(format!(
-                                    "{}  {}  {}  {} -> {}",
-                                    request.request_id,
-                                    request_kind_label(&request.kind),
-                                    delivery_label(&request.delivery),
-                                    request.requester_member_id,
-                                    request.target_member_id
-                                ));
-                                if let Some(result) = request.result.as_ref() {
-                                    let profile_id = snapshot
-                                        .profile
-                                        .as_ref()
-                                        .map(|profile| profile.member_id.as_str());
-                                    if profile_id == Some(request.requester_member_id.as_str())
-                                        || profile_id == Some(request.target_member_id.as_str())
-                                    {
-                                        let preview = result
-                                            .error
-                                            .as_deref()
-                                            .filter(|error| !error.is_empty())
-                                            .unwrap_or(&result.stdout);
-                                        lines.push(format!(
-                                            "  Result ({}): {}",
-                                            result.isolation,
-                                            bounded_preview(preview, 140)
-                                        ));
-                                        if result.output_truncated {
-                                            lines.push(
-                                                "  Output was truncated by the request limit."
-                                                    .into(),
-                                            );
-                                        }
-                                    } else {
-                                        lines.push(
-                                            "  Result is visible to the requester and target."
-                                                .into(),
-                                        );
-                                    }
-                                }
-                            }
-                        }
+                            " "
+                        },
+                        person(&question.requester_member_id),
+                        person(&question.target_member_id),
+                        question.delivery,
+                        bounded_preview(&question.question, 80)
+                    ));
+                    if question.consent.starts_with("Waiting") {
+                        lines.push(format!("  {}", question.consent));
                     }
-                    ClientTeamDashboardSection::Access => {
-                        if snapshot.permission_graph.is_empty() {
-                            lines.push("No team permission data recorded.".into());
-                            lines.push("Access inspection uses the local signed grant set.".into());
+                    if question.result.is_some() {
+                        lines.push("  Answer ready. Select it and press Enter to read.".into());
+                    }
+                }
+                if dashboard.guided.questions.is_empty() {
+                    lines.push("No project questions yet. Press / to ask one.".into());
+                }
+                footer = " Up/Down Select join  a Approve join  x Reject join".into();
+                secondary =
+                    " [ / ] Select question  Enter Review question or answer  Esc Close".into();
+            }
+            ClientTeamDashboardSection::Access => {
+                lines.push("Project access is controlled by the project owner.".into());
+                lines.push("The first question asks for consent on the owner's computer.".into());
+                lines.push(
+                    "o Connect a project on this device. Its repository files stay here.".into(),
+                );
+                lines.push(String::new());
+                for row in &snapshot.permission_graph {
+                    lines.push(format!(
+                        "{} | {} | {}",
+                        row.display_name,
+                        row.action,
+                        if row.allowed {
+                            "allowed"
                         } else {
-                            for row in &snapshot.permission_graph {
-                                lines.push(format!(
-                                    "{} ({}) -> {} ({}) [{}]",
-                                    row.display_name,
-                                    row.member_id,
-                                    row.action,
-                                    row.resource,
-                                    if row.allowed { "ALLOWED" } else { "DENIED" }
-                                ));
-                                let chain = if row.grant_chain.is_empty() {
-                                    "no matching grant".to_string()
-                                } else {
-                                    row.grant_chain.join(" -> ")
-                                };
-                                lines.push(format!("  {chain}; {}", row.reason));
-                            }
+                            "not allowed"
                         }
-                    }
+                    ));
                 }
             }
         }
-        if !dashboard.status.is_empty() {
-            lines.push(String::new());
-            lines.push(dashboard.status.clone());
+    }
+    let wrapped_rows = |width: u16| {
+        lines
+            .iter()
+            .map(|line| usize::from(display_width(line).max(1)).div_ceil(usize::from(width.max(1))))
+            .sum::<usize>()
+    };
+    let max_scroll = wrapped_rows(content.width).saturating_sub(usize::from(content.height));
+    let details = dashboard.guided.details.is_some() || dashboard.guided.consent.is_some();
+    let offset = if details { scroll.min(max_scroll) } else { 0 };
+    let mut team_pick_rows = Vec::new();
+    for (line, index) in pick_lines {
+        let row = lines
+            .iter()
+            .take(line)
+            .map(|text| {
+                usize::from(display_width(text).max(1)).div_ceil(usize::from(content.width.max(1)))
+            })
+            .sum::<usize>();
+        if row >= offset && row - offset < usize::from(content.height) {
+            team_pick_rows.push((
+                Rect::new(
+                    content.x,
+                    content.y + (row - offset) as u16,
+                    content.width,
+                    1,
+                ),
+                index,
+            ));
         }
     }
-    for (offset, line) in lines.iter().take(usize::from(content.height)).enumerate() {
-        let style = if offset == 0 && dashboard.snapshot.is_err() {
-            Style::default()
-                .fg(p.red)
-                .bg(p.panel_bg)
-                .add_modifier(Modifier::BOLD)
-        } else {
-            base
-        };
-        put_text(
-            b,
-            content.x,
-            content.y.saturating_add(offset as u16),
-            content.width,
-            line,
-            style,
-        );
-    }
+    Widget::render(
+        Paragraph::new(lines.join("\n"))
+            .style(base)
+            .wrap(Wrap { trim: false })
+            .scroll((u16::try_from(offset).unwrap_or(u16::MAX), 0)),
+        content,
+        b,
+    );
+    let status_y = i.bottom().saturating_sub(3);
+    let status = if dashboard.pending.is_some() {
+        "Working... Your draft is kept."
+    } else {
+        dashboard.status.as_str()
+    };
+    put_text(
+        b,
+        i.x,
+        status_y,
+        i.width,
+        &bounded_preview(status, usize::from(i.width)),
+        base.fg(p.accent),
+    );
+    put_text(
+        b,
+        i.x,
+        i.bottom().saturating_sub(2),
+        i.width,
+        &footer,
+        muted,
+    );
     put_text(
         b,
         i.x,
         i.bottom().saturating_sub(1),
         i.width,
-        if dashboard.section == ClientTeamDashboardSection::Tasks {
-            " j/k select  a accept  w work  d done  x cancel  ! attention  t assign  1-4 sections"
-        } else if dashboard.section == ClientTeamDashboardSection::Requests {
-            " j/k select  a approve join  x reject join  q ask teammate  s sync  Esc close"
-        } else if dashboard.section == ClientTeamDashboardSection::Access {
-            " 5 access  q ask teammate  1-4 other sections  Esc close"
-        } else {
-            " p profile c team i invite n join a requests t task b message r local read q remote check s sync y copy"
-        },
-        Style::default().fg(p.overlay0).bg(p.panel_bg),
+        &secondary,
+        muted,
     );
+    // Derive hit regions from visible labels; input dispatch owns action gating.
+    let mut action_lines = vec![
+        (footer.as_str(), i.bottom().saturating_sub(2)),
+        (secondary.as_str(), i.bottom().saturating_sub(1)),
+    ];
+    if dashboard.share_code.is_none()
+        && dashboard.form.is_none()
+        && dashboard.guided.details.is_none()
+        && dashboard.guided.invite.is_none()
+        && dashboard.guided.consent.is_none()
+    {
+        action_lines.push((home_actions, i.y + 2));
+    }
+    for (text, y) in action_lines {
+        for (label, key) in [
+            ("c Create", 'c'),
+            ("n Join", 'n'),
+            ("/ Ask", '/'),
+            ("t Assign", 't'),
+            ("b Message", 'b'),
+            ("i Invite", 'i'),
+            ("o Connect", 'o'),
+            ("g Switch", 'g'),
+            ("p Edit", 'p'),
+            ("a Approve", 'a'),
+            ("x Reject", 'x'),
+            ("x Deny", 'x'),
+            ("1 Allow once", '1'),
+            ("2 Allow this project", '2'),
+            ("a Accept", 'a'),
+            ("w Start", 'w'),
+            ("d Done", 'd'),
+            ("x Cancel", 'x'),
+            ("! Need help", '!'),
+            ("f Follow", 'f'),
+            ("Enter", '\n'),
+            ("Esc", '\u{1b}'),
+        ] {
+            if let Some(start) = text.find(label) {
+                let x = display_width(&text[..start]);
+                let width = display_width(label).min(i.width.saturating_sub(x));
+                if width > 0 {
+                    team_keys.push((Rect::new(i.x + x, y, width, 1), key));
+                }
+            }
+        }
+    }
     Some(OverlayRender {
         area: q,
         primary: q,
+        team_keys,
+        team_pick_rows,
         ..OverlayRender::default()
     })
 }

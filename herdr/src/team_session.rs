@@ -467,7 +467,7 @@ mod tests {
             invitation: invitation.with_signature(signature).unwrap(),
             pairing_code,
             relay_url: "https://example.com".into(),
-            relay_token: "test-access-token".into(),
+            relay_token: "a".repeat(43),
         }
     }
 

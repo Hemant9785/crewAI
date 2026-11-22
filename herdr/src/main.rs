@@ -61,6 +61,7 @@ mod session;
 mod sound;
 mod sync;
 mod team;
+mod team_session;
 mod team_storage;
 mod team_view;
 mod terminal;

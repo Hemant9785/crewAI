@@ -225,6 +225,10 @@ pub(super) fn sync_team(
         .new_agent();
     let identity = DeviceIdentity::load_existing(crate::cli::join_inbox::identity_path(database))
         .map_err(|error| format!("relay device identity unavailable: {error}"))?;
+    crate::cli::questions::publish_local_projects(
+        database,
+        &crate::cli::join_inbox::identity_path(database),
+    )?;
     let mut store = TeamStore::open(database).map_err(|error| error.to_string())?;
     let mut uploaded = 0;
     for events in store
