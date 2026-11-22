@@ -250,6 +250,10 @@ mod tests {
 
     fn seed_store(database: &PathBuf, identity: &DeviceIdentity, member_id: &str) -> TeamStore {
         let store = TeamStore::open(database).unwrap();
+        store.save_team(&crate::team::Team { team_id: "team-1".into(), name: "Sync test".into(), authority_member_id: "member-1".into(), created_at: 1 }).unwrap();
+        for id in ["member-1", "member-2"] {
+            store.save_member("team-1", &Member { member_id: id.into(), display_name: id.into(), role: Role::Implementer, active: true }, 1).unwrap();
+        }
         let member = Member {
             member_id: member_id.into(),
             display_name: member_id.into(),

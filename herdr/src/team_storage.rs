@@ -4,6 +4,8 @@
 //! permission evaluation, synchronization, and agent execution remain outside
 //! this module.
 
+mod task_events;
+
 use crate::identity::DeviceIdentity;
 use crate::team::{
     validate_broadcast_message, validate_broadcast_scope, validate_delivery_transition,
@@ -935,6 +937,7 @@ impl TeamStore {
             }
         }
 
+        self.validate_task_event(event, created_at, verify_signature)?;
         let payload_json = serde_json::to_string(&event.payload)?;
         let transaction = self.connection.transaction()?;
         let changed = transaction.execute(
@@ -1749,17 +1752,7 @@ fn project_event(
         EventType::TaskStatusChanged => {
             let payload: TaskStatusChangedPayload = serde_json::from_value(event.payload.clone())?;
             validate_payload_text(&payload.task_id, "task.task_id")?;
-            let current_json: String = transaction.query_row(
-                "SELECT status_json FROM tasks WHERE task_id = ?1",
-                params![&payload.task_id],
-                |row| row.get(0),
-            )?;
-            let current: TaskStatus = decode(&current_json)?;
-            validate_task_transition(&current, &payload.status)?;
-            transaction.execute(
-                "UPDATE tasks SET status_json = ?1, updated_at = ?2 WHERE task_id = ?3",
-                params![encode(&payload.status)?, received_at, &payload.task_id],
-            )?;
+            task_events::rebuild_status(transaction, &payload.task_id, &event.team_id, received_at)?;
             transaction.execute(
                 "INSERT INTO task_activity
                     (activity_id, task_id, actor_member_id, activity_type, message,
@@ -2047,6 +2040,7 @@ mod tests {
     }
 
     fn authorize(store: &TeamStore) {
+        store.save_team(&Team { team_id: "team-1".into(), name: "Test".into(), authority_member_id: "member-1".into(), created_at: 1 }).unwrap();
         store
             .save_member("team-1", &member("member-1", "Ravi"), 1)
             .unwrap();

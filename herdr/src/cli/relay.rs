@@ -1,4 +1,7 @@
+use crate::identity::DeviceIdentity;
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -220,6 +223,8 @@ pub(super) fn sync_team(
         .timeout_global(Some(Duration::from_secs(15)))
         .build()
         .new_agent();
+    let identity = DeviceIdentity::load_existing(crate::cli::join_inbox::identity_path(database))
+        .map_err(|error| format!("relay device identity unavailable: {error}"))?;
     let mut store = TeamStore::open(database).map_err(|error| error.to_string())?;
     let mut uploaded = 0;
     for events in store
@@ -242,7 +247,7 @@ pub(super) fn sync_team(
         }
         let url = format!("{endpoint}/v1/teams/{team_id}/events");
         let upload = Upload { events: envelopes };
-        let result = post_upload(&agent, &url, token, &upload)?;
+        let result = post_upload(&agent, &url, token, &upload, team_id, &identity)?;
         let _ = result.cursor;
         uploaded += events.len();
     }
@@ -254,7 +259,8 @@ pub(super) fn sync_team(
     loop {
         let url =
             format!("{endpoint}/v1/teams/{team_id}/events?after={cursor}&limit={MAX_PAGE_EVENTS}");
-        let mut response = get_page(&agent, &url, token)?;
+        let previous_cursor = cursor;
+        let mut response = get_page(&agent, &url, token, team_id, &identity)?;
         let page = response
             .body_mut()
             .with_config()
@@ -296,7 +302,7 @@ pub(super) fn sync_team(
         if !page.has_more {
             break;
         }
-        if events_is_empty_at_cursor(cursor, next_cursor) {
+        if events_is_empty_at_cursor(previous_cursor, next_cursor) {
             return Err("relay pagination made no progress".into());
         }
     }
@@ -308,12 +314,21 @@ fn post_upload(
     url: &str,
     token: &str,
     upload: &Upload<'_>,
+    team_id: &str,
+    identity: &DeviceIdentity,
 ) -> Result<UploadResponse, String> {
+    let body = serde_json::to_vec(upload).map_err(|error| error.to_string())?;
     for attempt in 0..3 {
+        let (timestamp, nonce, signature) = access_proof(identity, team_id, "POST", url, &body)?;
         match agent
             .post(url)
             .header("Authorization", &format!("Bearer {token}"))
-            .send_json(upload)
+            .header("Content-Type", "application/json")
+            .header("x-relay-device", identity.device_id())
+            .header("x-relay-time", &timestamp.to_string())
+            .header("x-relay-nonce", &nonce)
+            .header("x-relay-signature", &signature)
+            .send(body.as_slice())
         {
             Ok(response) => {
                 return response
@@ -343,11 +358,18 @@ fn get_page(
     agent: &ureq::Agent,
     url: &str,
     token: &str,
+    team_id: &str,
+    identity: &DeviceIdentity,
 ) -> Result<ureq::http::Response<ureq::Body>, String> {
     for attempt in 0..3 {
+        let (timestamp, nonce, signature) = access_proof(identity, team_id, "GET", url, &[])?;
         match agent
             .get(url)
             .header("Authorization", &format!("Bearer {token}"))
+            .header("x-relay-device", identity.device_id())
+            .header("x-relay-time", &timestamp.to_string())
+            .header("x-relay-nonce", &nonce)
+            .header("x-relay-signature", &signature)
             .call()
         {
             Ok(response) => return Ok(response),
@@ -382,11 +404,49 @@ pub(super) fn auto_sync_after_write(
     Ok(true)
 }
 
+fn access_proof(
+    identity: &DeviceIdentity,
+    team_id: &str,
+    method: &str,
+    url: &str,
+    body: &[u8],
+) -> Result<(u64, String, String), String> {
+    let uri: ureq::http::Uri = url.parse().map_err(|_| "invalid relay URL".to_string())?;
+    let target = uri
+        .path_and_query()
+        .map(|value| value.as_str())
+        .unwrap_or("/");
+    let timestamp = now();
+    let mut random = [0_u8; 24];
+    OsRng.fill_bytes(&mut random);
+    let nonce = random
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let digest = Sha256::digest(body)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    let message = serde_json::to_vec(&(
+        "team-assistant/relay-access/v1",
+        team_id,
+        identity.device_id(),
+        method,
+        target,
+        digest,
+        timestamp,
+        &nonce,
+    ))
+    .map_err(|error| error.to_string())?;
+    let signature = identity.sign(&message);
+    Ok((timestamp, nonce, signature))
+}
+
 fn events_is_empty_at_cursor(current: u64, previous: u64) -> bool {
     current == previous
 }
 
-pub(super) fn validate_endpoint(endpoint: &str) -> Result<String, &'static str> {
+pub(crate) fn validate_endpoint(endpoint: &str) -> Result<String, &'static str> {
     let value = endpoint.trim().trim_end_matches('/');
     let local_http = ["http://localhost", "http://127.0.0.1", "http://[::1]"]
         .iter()

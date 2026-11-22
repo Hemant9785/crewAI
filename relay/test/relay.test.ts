@@ -10,6 +10,7 @@ import {
 const TEAM_ID = "team-relay-test-01";
 const TOKEN = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 const AUTHORIZATION = `Bearer ${TOKEN}`;
+const owners = new Map<string, TestIdentity>();
 
 interface RelayPage {
   events: Array<EventEnvelope & { sequence: number }>;
@@ -224,7 +225,8 @@ async function signedEnvelope(
   payload?: Record<string, unknown>,
   identity?: TestIdentity,
 ): Promise<EventEnvelope> {
-  const signer = identity ?? await testIdentity();
+  const signer = identity ?? owners.get(teamId) ?? await testIdentity();
+  if(eventType === "team.created" || !owners.has(teamId)) owners.set(teamId,signer);
   const event: TeamEvent = {
     event_id: eventId,
     team_id: teamId,
@@ -267,16 +269,18 @@ async function testIdentity(): Promise<TestIdentity> {
 }
 
 async function upload(teamId: string, events: EventEnvelope[]): Promise<Response> {
-  return exports.default.fetch!(new Request(`https://relay.test/v1/teams/${teamId}/events`, {
+  const body=JSON.stringify({events}), target=`/v1/teams/${teamId}/events`;
+  return exports.default.fetch!(new Request(`https://relay.test${target}`, {
     method: "POST",
-    headers: { authorization: AUTHORIZATION, "content-type": "application/json" },
-    body: JSON.stringify({ events }),
+    headers: { authorization: AUTHORIZATION, "content-type": "application/json", ...await proof(teamId,owners.get(teamId)!,"POST",target,body) },
+    body,
   }));
 }
 
 async function fetchPage(teamId: string, after: number, limit: number, token = TOKEN): Promise<Response> {
-  return exports.default.fetch!(new Request(`https://relay.test/v1/teams/${teamId}/events?after=${after}&limit=${limit}`, {
-    headers: { authorization: `Bearer ${token}` },
+  const target=`/v1/teams/${teamId}/events?after=${after}&limit=${limit}`;
+  return exports.default.fetch!(new Request(`https://relay.test${target}`, {
+    headers: { authorization: `Bearer ${token}`, ...await proof(teamId,owners.get(teamId)!,"GET",target,"") },
   }));
 }
 
@@ -379,3 +383,36 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = new Uint8Array(await crypto.subtle.digest("SHA-256", asArrayBuffer(bytes)));
   return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
+
+async function proof(teamId:string,identity:TestIdentity,method:string,target:string,body:string,timestamp=Math.floor(Date.now()/1000)) {
+  const nonce=crypto.randomUUID(), digest=await sha256Hex(encoder.encode(body));
+  const message=encoder.encode(stableJson(["team-assistant/relay-access/v1",teamId,identity.deviceId,method,target,digest,timestamp,nonce]));
+  const signature=toBase64(new Uint8Array(await crypto.subtle.sign("Ed25519",identity.privateKey,asArrayBuffer(message))));
+  return {"x-relay-device":identity.deviceId,"x-relay-time":String(timestamp),"x-relay-nonce":nonce,"x-relay-signature":signature};
+}
+
+describe("approved device access",()=>{
+  it("denies pairing-only and rejected devices, verifies bound proofs, and preserves revocation",async()=>{
+    const team="team-access-control",owner=await testIdentity(),applicant=await testIdentity();
+    expect((await upload(team,[await signedEnvelope(team,"team.created","access-created",undefined,owner)])).status).toBe(200);
+    const target=`/v1/teams/${team}/events?after=0&limit=10`;
+    const read=async(headers:Record<string,string>)=>exports.default.fetch!(new Request(`https://relay.test${target}`,{headers:{authorization:AUTHORIZATION,...headers}}));
+    expect((await read({})).status).toBe(403);
+    expect((await read(await proof(team,applicant,"GET",target,""))).status).toBe(403);
+    const request=await signedJoin(team,applicant);
+    await joinCommand(team,{action:"submit",request});
+    expect((await read(await proof(team,applicant,"GET",target,""))).status).toBe(403);
+    await controlJoin(team,owner,"rejected",applicant.deviceId,undefined,request.signature);
+    expect((await read(await proof(team,applicant,"GET",target,""))).status).toBe(403);
+    const replay=await proof(team,owner,"GET",target,"");
+    expect((await read(replay)).status).toBe(200);
+    expect((await read(replay)).status).toBe(403);
+    expect((await read(await proof(team,owner,"GET",target,"",1))).status).toBe(403);
+    expect((await read(await proof(team,owner,"GET",target+"0",""))).status).toBe(403);
+    expect((await upload(team,[await signedEnvelope(team,"member.added","access-member",{member_id:"applicant",active:true},owner)])).status).toBe(200);
+    expect((await upload(team,[await signedEnvelope(team,"device.added","access-device",{member_id:"applicant",device_id:applicant.deviceId,public_key:applicant.publicKeyBase64,active:true},owner)])).status).toBe(200);
+    expect((await read(await proof(team,applicant,"GET",target,""))).status).toBe(200);
+    expect((await upload(team,[await signedEnvelope(team,"member.added","access-revoke",{member_id:"applicant",active:false},owner)])).status).toBe(200);
+    expect((await read(await proof(team,applicant,"GET",target,""))).status).toBe(403);
+  });
+});

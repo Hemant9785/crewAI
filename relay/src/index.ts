@@ -1,3 +1,4 @@
+import { ACCESS_SCHEMA, refreshAccess, authorizeAccess, forwardAccess, approvedDevice } from "./access";
 import { DurableObject } from "cloudflare:workers";
 import { JOIN_INBOX_SCHEMA, joinInbox } from "./join-inbox";
 import {
@@ -182,6 +183,7 @@ export default {
       forwarded = new Request("https://relay.internal/v1/events", {
         method: "POST",
         headers: {
+          ...(await forwardAccess(request, url.pathname + url.search, body)),
           "content-type": "application/json",
           "x-team-id": teamId,
           "x-team-token-hash": tokenHash,
@@ -193,7 +195,7 @@ export default {
       if (paging === null) return json({ error: "invalid_cursor" }, 400);
       forwarded = new Request(`https://relay.internal/v1/events?after=${paging.after}&limit=${paging.limit}`, {
         method: "GET",
-        headers: { "x-team-id": teamId, "x-team-token-hash": tokenHash },
+        headers: { ...(await forwardAccess(request, url.pathname + url.search, new Uint8Array())), "x-team-id": teamId, "x-team-token-hash": tokenHash },
       });
     } else if (parts[3] === "events") {
       return json({ error: "method_not_allowed" }, 405, { allow: "GET, POST" });
@@ -211,6 +213,7 @@ export class TeamRelay extends DurableObject<Env> {
     super(ctx, env);
     ctx.blockConcurrencyWhile(async () => {
       ctx.storage.sql.exec(JOIN_INBOX_SCHEMA);
+      ctx.storage.sql.exec(ACCESS_SCHEMA);
       ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS relay_team (
           team_id TEXT PRIMARY KEY,
@@ -287,6 +290,26 @@ export class TeamRelay extends DurableObject<Env> {
       }
       const events = (decoded as { events?: unknown } | null)?.events;
       if (!validateEventBatch(events)) return json({ error: "invalid_batch_size" }, 400);
+      const team = this.ctx.storage.sql.exec<StoredTeamRow>("SELECT * FROM relay_team WHERE team_id=?", teamId).toArray()[0];
+      if (team && !timingSafeEqualText(team.token_hash, tokenHash)) return json({error:"invalid_team_token"},401);
+      if (team) await refreshAccess(this.ctx.storage.sql, teamId, team);
+      const bootstrap = team ? undefined : events.find(e=>e.event.event_type === "team.created" && e.event.payload.authority_member_id === e.event.actor_member_id);
+      for (const envelope of events) {
+        const invalid = await validateEnvelope(envelope, teamId);
+        if (invalid) return json({error:invalid.code}, invalid.status);
+      }
+      const access = await authorizeAccess(this.ctx.storage.sql, request, teamId, bootstrap);
+      if (access) return json({error:access},403);
+      // Every newly uploaded event must come from an approved device. Old identical
+      // history remains uploadable after revocation without reinstating its signer.
+      for (const envelope of events) {
+        const old = this.ctx.storage.sql.exec<{event_json:string}>("SELECT event_json FROM relay_events WHERE event_id=?",envelope.event.event_id).toArray()[0];
+        if (old) continue;
+        const signer = approvedDevice(this.ctx.storage.sql,envelope.event.device_id);
+        const owner = team ? envelope.event.actor_member_id===team.authority_member_id && envelope.event.device_id===team.authority_device_id && envelope.public_key===team.authority_public_key : !!bootstrap && envelope.event.actor_member_id===bootstrap.event.actor_member_id && envelope.event.device_id===bootstrap.event.device_id && envelope.public_key===bootstrap.public_key;
+        if (!owner && (!signer || signer.member_id!==envelope.event.actor_member_id || signer.public_key!==envelope.public_key)) return json({error:"event_device_not_approved"},403);
+        if (["member.added","device.added","team.created"].includes(envelope.event.event_type) && !owner) return json({error:"authority_required"},403);
+      }
       const result = this.appendEvents(teamId, tokenHash, events);
       return json(result, result.status);
     }
@@ -305,6 +328,11 @@ export class TeamRelay extends DurableObject<Env> {
     if (request.method === "GET" && url.pathname === "/v1/events") {
       const paging = validatePaging(url.searchParams.get("after"), url.searchParams.get("limit"));
       if (paging === null) return json({ error: "invalid_cursor" }, 400);
+      const team = this.ctx.storage.sql.exec<StoredTeamRow>("SELECT * FROM relay_team WHERE team_id=?",teamId).toArray()[0];
+      if (!team || !timingSafeEqualText(team.token_hash,tokenHash)) return json({error:"invalid_team_token"},401);
+      await refreshAccess(this.ctx.storage.sql,teamId,team);
+      const access=await authorizeAccess(this.ctx.storage.sql,request,teamId);
+      if(access) return json({error:access},403);
       const result = this.readEvents(teamId, tokenHash, paging.after, paging.limit);
       return json(result, result.status);
     }
