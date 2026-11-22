@@ -84,6 +84,22 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Poll requester decision status, preserve signature and invitation checks, verify replay/authorization, and publish updated binaries.
   - **Completion note (2026-11-22):** Added bounded persistent signed pairing inbox, automatic dashboard submission, authority-only request listing and decisions, five-second dashboard polling, requester decision status, and selected-request approval/rejection with no pasted return code. Decisions bind to the exact signed request; original local invitation/signature checks still gate membership. Legacy manual approval uses capital `A`. Verification: relay tests (10), typecheck, dashboard tests (9), integrated Rust build/check, and live isolated approval/rejection/status/member-sync smoke passed. Deployed relay `5edaf382-6d56-4abf-ac6a-af83bcf232af`. Published Windows/Linux release `v0.1.7` from `544ce94`; workflow `45016653224` succeeded. Both downloaded hashes verified; released Windows binary passed approval/rejection/status/task/broadcast sync smoke, and Linux release onboarding passed. Limitations: inbox polling requires an open dashboard; pairing metadata expires after seven days on access; credentials remain session-only and reconnect needs a fresh invite. Broad suite attempted with two known stalled tests excluded: 3,492 passed, 44 failed; stopped after two other transport stalls.
 
+- [ ] **1.14 Make dashboard manager setup independent of shell relay settings.**
+  - Supply the default relay URL and a random team credential; retain the credential across dashboard close/reopen in the same process.
+  - Pass explicit credentials to invite creation and use distinct fresh profile IDs.
+  - Verify fresh-manager create/invite/join and publish updated release binaries.
+  - Review four user flows independently and record remaining issues.
+  - Progress: four code reviews complete in `docs/2026-11-22-user-flow-review.md`; 12 focused dashboard tests passed; build and release in progress. Whole-app restart recovery remains outside the memory-only policy.
+
+- [ ] **1.15 Separate pairing access from approved-device team-event reads.**
+  - Review finding: pending/rejected invite holders possess a shared relay token and can fetch broadcasts. Enforce approved-device read access without weakening signatures.
+- [ ] **1.16 Enforce task permissions and resolve concurrent task-state updates.**
+  - Review findings: unauthorized task updates and redundant concurrent states can block synchronization.
+- [ ] **1.17 Add deliberate manager credential recovery and safe profile/team editing.**
+  - Preserve the current memory-only boundary until a protected persistence/recovery design is explicitly chosen.
+- [ ] **1.18 Complete readable local answers and in-terminal workflows.**
+  - Review findings: Codex executable discovery, clipped answers/messages, contextual slash commands, task history/followups, delivery feedback, and selection viewports.
+
 ## Known prototype limitations
 
 - Permission inspection is available; permission grant/revoke UI needs a signed synchronized domain command.

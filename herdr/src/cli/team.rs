@@ -77,7 +77,7 @@ pub(crate) fn create_invite_bundle(
     create_invite_bundle_with_credentials(database, team_id, identity_path, &endpoint, &token)
 }
 
-fn create_invite_bundle_with_credentials(
+pub(crate) fn create_invite_bundle_with_credentials(
     database: &Path,
     team_id: &str,
     identity_path: &Path,
@@ -651,7 +651,7 @@ fn required(options: &HashMap<String, String>, key: &str) -> std::io::Result<Str
 fn required_path(options: &HashMap<String, String>, key: &str) -> std::io::Result<PathBuf> {
     Ok(PathBuf::from(required(options, key)?))
 }
-fn generate_token() -> String {
+pub(crate) fn generate_token() -> String {
     let mut bytes = [0_u8; 32];
     OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)

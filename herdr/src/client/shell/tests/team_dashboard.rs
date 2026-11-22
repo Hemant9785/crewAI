@@ -34,6 +34,71 @@ fn dashboard_with_join_form() -> ClientShellState {
 }
 
 #[test]
+fn team_creation_configures_relay_without_shell_variables_and_preserves_retry_token() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.overlay = Some(dashboard_without_database());
+    state.prepare_team_dashboard_relay();
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    assert_eq!(
+        d.relay_url.as_deref(),
+        Some(crate::cli::relay::DEFAULT_RELAY_URL)
+    );
+    let token = d.relay_token.clone().expect("generated team token");
+    assert_eq!(token.len(), 43);
+    assert!(token
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-'));
+    state.prepare_team_dashboard_relay();
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    assert_eq!(d.relay_token.as_ref(), Some(&token));
+}
+
+#[test]
+fn team_creation_preserves_explicit_custom_relay_configuration() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let ClientShellOverlay::TeamDashboard(mut d) = dashboard_without_database() else {
+        unreachable!()
+    };
+    d.relay_url = Some("https://custom-relay.example".into());
+    d.relay_token = Some("A".repeat(43));
+    state.overlay = Some(ClientShellOverlay::TeamDashboard(d));
+    state.prepare_team_dashboard_relay();
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard");
+    };
+    assert_eq!(d.relay_url.as_deref(), Some("https://custom-relay.example"));
+    assert_eq!(d.relay_token.as_deref(), Some("A".repeat(43).as_str()));
+}
+
+#[test]
+fn fresh_profile_form_has_a_unique_member_id() {
+    let mut ids = Vec::new();
+    for _ in 0..2 {
+        let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+        state.overlay = Some(dashboard_without_database());
+        state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+            KeyCode::Char('p'),
+            KeyModifiers::empty(),
+        ))]);
+        let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+            panic!("dashboard");
+        };
+        let id = d.form.as_ref().expect("profile form").fields[0]
+            .1
+            .as_str()
+            .to_owned();
+        assert_ne!(id, "member-1");
+        assert!(id.starts_with("member-"));
+        ids.push(id);
+    }
+    assert_ne!(ids[0], ids[1]);
+}
+
+#[test]
 fn approval_shortcut_opens_requests_without_a_paste_form() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.overlay = Some(dashboard_without_database());

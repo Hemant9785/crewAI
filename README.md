@@ -141,6 +141,8 @@ it in progress, `d` to complete, `x` to cancel, and `!` to flag it for
 attention. Right-click an agent pane and choose **Link team task** to show its
 task in Agents; this pane-to-task link is local to the current Herdr session.
 
+Dashboard team creation configures the project relay automatically; no relay environment variables are needed for a fresh session. Keep the manager application open during testing: generated connection credentials are currently session-only and full manager restart recovery is not implemented.
+
 For a first teammate: press `i`, then `y` to share the six-digit invite privately.
 The teammate sets up their profile with `p`, presses `n`, and enters the six digits.
 Their signed join request is sent automatically. On the manager dashboard, open

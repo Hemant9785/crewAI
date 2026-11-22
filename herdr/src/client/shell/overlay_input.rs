@@ -1179,9 +1179,19 @@ impl ClientShellState {
             .file_name()
             .and_then(|name| name.to_str())
             .unwrap_or("repository");
+        let member_id = match self.overlay.as_ref() {
+            Some(ClientShellOverlay::TeamDashboard(dashboard)) => dashboard
+                .snapshot
+                .as_ref()
+                .ok()
+                .and_then(|snapshot| snapshot.profile.as_ref())
+                .map(|profile| profile.member_id.clone()),
+            _ => None,
+        }
+        .unwrap_or_else(|| format!("member-{}", &crate::cli::team::generate_token()[..10]));
         let fields = match action {
             ClientTeamDashboardAction::Profile => vec![
-                ("Member ID".into(), TextEditor::new("member-1", false)),
+                ("Member ID".into(), TextEditor::new(&member_id, false)),
                 ("Your name".into(), TextEditor::default()),
                 (
                     "Role (manager/group_head/part_head/implementer)".into(),
@@ -1527,6 +1537,9 @@ impl ClientShellState {
         values: Vec<String>,
     ) -> Result<(), String> {
         use ClientTeamDashboardAction as Action;
+        if action == Action::CreateTeam {
+            self.prepare_team_dashboard_relay();
+        }
         let database = crate::team_view::default_database_path();
         let identity = database.with_file_name(format!(
             "{}.identity.json",
@@ -1572,8 +1585,16 @@ impl ClientShellState {
                         Action::Invite => {
                             let team_id =
                                 team_id.as_deref().ok_or("Create or join a team first")?;
-                            let bundle = crate::cli::team::create_invite_bundle(
-                                &database, team_id, &identity,
+                            let bundle = crate::cli::team::create_invite_bundle_with_credentials(
+                                &database,
+                                team_id,
+                                &identity,
+                                relay_url
+                                    .as_deref()
+                                    .ok_or("Reconnect this session to the team before inviting")?,
+                                relay_token
+                                    .as_deref()
+                                    .ok_or("Reconnect this session to the team before inviting")?,
                             )
                             .map_err(|error| error.to_string())?;
                             let signed_code = crate::cli::team::encode_invite_code(&bundle)
@@ -1869,7 +1890,9 @@ impl ClientShellState {
             }
             let details = outputs.join("\n").chars().take(2000).collect::<String>();
             let status = if succeeded == command_count {
-                if action == Action::Task && command_count > 1 {
+                if action == Action::CreateTeam {
+                    "Team created. Press i to invite a teammate.".into()
+                } else if action == Action::Task && command_count > 1 {
                     format!("Assigned to {succeeded} teammate(s).\n{details}")
                 } else {
                     format!("Completed:\n{details}")
@@ -1881,7 +1904,11 @@ impl ClientShellState {
             };
             let completion = ClientTeamDashboardResult {
                 status,
-                relay_credentials: None,
+                relay_credentials: if action == Action::CreateTeam {
+                    relay_url.zip(relay_token)
+                } else {
+                    None
+                },
                 share_code: None,
             };
             let _ = sender.send(completion);
@@ -1891,6 +1918,26 @@ impl ClientShellState {
             dashboard.pending = Some(receiver);
         }
         Ok(())
+    }
+
+    pub(super) fn prepare_team_dashboard_relay(&mut self) {
+        if let Some(ClientShellOverlay::TeamDashboard(dashboard)) = self.overlay.as_mut() {
+            dashboard
+                .relay_url
+                .get_or_insert_with(|| crate::cli::relay::DEFAULT_RELAY_URL.into());
+            dashboard
+                .relay_token
+                .get_or_insert_with(crate::cli::team::generate_token);
+            if let (Some(sink), Some((url, token))) = (
+                self.relay_credential_sink.as_ref(),
+                dashboard
+                    .relay_url
+                    .as_ref()
+                    .zip(dashboard.relay_token.as_ref()),
+            ) {
+                let _ = sink.set(url.clone(), token.clone());
+            }
+        }
     }
 
     fn run_team_dashboard_sync(&mut self) {

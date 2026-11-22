@@ -200,3 +200,7 @@ Every implementation task must include evidence appropriate to its scope:
 ## Automatic join inbox (2026-11-22)
 
 Entering an invite in the dashboard sends the signed join request to a per-team relay inbox automatically. The manager dashboard polls for pending requests and provides approve/reject actions. Listing and decisions require an authority signature, requester status requires the requester signature, and decisions bind to the exact signed request to prevent replay against a later request. Approval continues through local invitation/signature checks and signed membership events. The relay inbox retains at most 100 device requests for up to seven days (expired rows are removed on access). This mailbox is bounded team pairing metadata; repository files and private keys are excluded. Legacy manual signed-request approval remains an optional compatibility path.
+
+## Dashboard relay bootstrap (2026-11-22)
+
+For a new team, the dashboard uses the project default HTTPS relay unless explicitly configured, generates a cryptographically random bearer token, passes it to the create-team child through the environment, and retains it in the process credential sink before launching the action. Invites use the same explicit in-memory credentials. Credentials survive closing/reopening the dashboard within the process, but are not persisted across full application restart. Fresh profile IDs are unique; existing profile IDs are preserved.
