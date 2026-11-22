@@ -42,6 +42,12 @@ download the published binary without compiling source on the user's machine.
 Release binaries do not self-update from upstream Herdr; rerun the matching
 installer when a new Team Herdr release is published.
 
+## Upgrading an existing v0.1.x team
+
+Update both devices before testing v0.2.0; older event clients cannot use the new signed-device relay access. Rerun the installer, then close and relaunch Herdr.
+
+v0.1.x kept connection credentials only in memory. Before closing an existing manager session, create and record a fresh invite. After upgrading that manager, use Join with that code once to restore the same team's connection. Its database and identity are preserved. Then issue a separate fresh invite for any teammate that needs to reconnect. Codes expire after ten minutes and are one use. Connections saved by v0.2.0 restore automatically on subsequent restarts.
+
 ## Prerequisites
 
 The local development build workflow targets Windows 10/11 and keeps generated
