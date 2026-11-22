@@ -414,5 +414,14 @@ describe("approved device access",()=>{
     expect((await read(await proof(team,applicant,"GET",target,""))).status).toBe(200);
     expect((await upload(team,[await signedEnvelope(team,"member.added","access-revoke",{member_id:"applicant",active:false},owner)])).status).toBe(200);
     expect((await read(await proof(team,applicant,"GET",target,""))).status).toBe(403);
+    // Delayed authority-signed history must not undo a newer revocation.
+    expect((await upload(team,[await signedEnvelope(team,"member.added","access-a-stale",{member_id:"applicant",active:true},owner)])).status).toBe(200);
+    expect((await read(await proof(team,applicant,"GET",target,""))).status).toBe(403);
+    const postTarget=`/v1/teams/${team}/events`;
+    const event=await signedEnvelope(team,"broadcast.created","access-body-tamper",undefined,owner);
+    const body=JSON.stringify({events:[event]});
+    const badProof=await proof(team,owner,"POST",postTarget,body+" ");
+    const tampered=await exports.default.fetch!(new Request(`https://relay.test${postTarget}`,{method:"POST",headers:{authorization:AUTHORIZATION,"content-type":"application/json",...badProof},body}));
+    expect(tampered.status).toBe(403);
   });
 });

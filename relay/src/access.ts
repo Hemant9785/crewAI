@@ -1,7 +1,7 @@
 import { decodeBase64, sha256Hex, stableJson, validateEnvelope, type EventEnvelope } from './protocol';
 export const ACCESS_SCHEMA = `
-CREATE TABLE IF NOT EXISTS relay_members(member_id TEXT PRIMARY KEY, active INTEGER NOT NULL);
-CREATE TABLE IF NOT EXISTS relay_devices(device_id TEXT PRIMARY KEY, member_id TEXT NOT NULL, public_key TEXT NOT NULL, active INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS relay_members(member_id TEXT PRIMARY KEY, active INTEGER NOT NULL, logical_time INTEGER NOT NULL, event_id TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS relay_devices(device_id TEXT PRIMARY KEY, member_id TEXT NOT NULL, public_key TEXT NOT NULL, active INTEGER NOT NULL, logical_time INTEGER NOT NULL, event_id TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS relay_access_nonces(device_id TEXT NOT NULL, nonce TEXT NOT NULL, expires_at INTEGER NOT NULL, PRIMARY KEY(device_id,nonce));
 CREATE TABLE IF NOT EXISTS relay_access_cursor(id INTEGER PRIMARY KEY, sequence INTEGER NOT NULL);`;
 interface Authority { authority_member_id:string; authority_device_id:string; authority_public_key:string }
@@ -9,8 +9,8 @@ interface DeviceRow { [key:string]:string|number; device_id:string; member_id:st
 const bytes=(v:Uint8Array):ArrayBuffer=>Uint8Array.from(v).buffer;
 const encoder=new TextEncoder();
 export async function refreshAccess(sql:SqlStorage, teamId:string, authority:Authority):Promise<void> {
-  sql.exec('INSERT OR IGNORE INTO relay_members VALUES (?,1)',authority.authority_member_id);
-  sql.exec('INSERT OR IGNORE INTO relay_devices VALUES (?,?,?,1)',authority.authority_device_id,authority.authority_member_id,authority.authority_public_key);
+  sql.exec("INSERT OR IGNORE INTO relay_members VALUES (?,1,-1,'')",authority.authority_member_id);
+  sql.exec("INSERT OR IGNORE INTO relay_devices VALUES (?,?,?,1,-1,'')",authority.authority_device_id,authority.authority_member_id,authority.authority_public_key);
   const cursor=sql.exec<{sequence:number}>('SELECT sequence FROM relay_access_cursor WHERE id=1').toArray()[0]?.sequence ?? 0;
   const rows=sql.exec<{sequence:number;event_json:string}>('SELECT sequence,event_json FROM relay_events WHERE sequence>? ORDER BY sequence',cursor).toArray();
   for(const row of rows) {
@@ -22,9 +22,9 @@ export async function refreshAccess(sql:SqlStorage, teamId:string, authority:Aut
 export function applyMembership(sql:SqlStorage,envelope:EventEnvelope):void {
   const e=envelope.event,p=e.payload;
   if(e.event_type==='member.added' && typeof p.member_id==='string' && typeof p.active==='boolean')
-    sql.exec('INSERT OR REPLACE INTO relay_members VALUES (?,?)',p.member_id,p.active?1:0);
+    sql.exec('INSERT INTO relay_members VALUES (?,?,?,?) ON CONFLICT(member_id) DO UPDATE SET active=excluded.active,logical_time=excluded.logical_time,event_id=excluded.event_id WHERE excluded.logical_time>relay_members.logical_time OR (excluded.logical_time=relay_members.logical_time AND excluded.event_id>relay_members.event_id)',p.member_id,p.active?1:0,e.logical_time,e.event_id);
   if(e.event_type==='device.added' && typeof p.device_id==='string' && typeof p.member_id==='string' && typeof p.public_key==='string' && decodeBase64(p.public_key,32) && typeof p.active==='boolean')
-    sql.exec('INSERT OR REPLACE INTO relay_devices VALUES (?,?,?,?)',p.device_id,p.member_id,p.public_key,p.active?1:0);
+    sql.exec('INSERT INTO relay_devices VALUES (?,?,?,?,?,?) ON CONFLICT(device_id) DO UPDATE SET active=excluded.active,logical_time=excluded.logical_time,event_id=excluded.event_id WHERE relay_devices.member_id=excluded.member_id AND relay_devices.public_key=excluded.public_key AND (excluded.logical_time>relay_devices.logical_time OR (excluded.logical_time=relay_devices.logical_time AND excluded.event_id>relay_devices.event_id))',p.device_id,p.member_id,p.public_key,p.active?1:0,e.logical_time,e.event_id);
 }
 export function approvedDevice(sql:SqlStorage,deviceId:string):DeviceRow|undefined {
   return sql.exec<DeviceRow>('SELECT d.* FROM relay_devices d JOIN relay_members m ON m.member_id=d.member_id WHERE d.device_id=? AND d.active=1 AND m.active=1',deviceId).toArray()[0];
