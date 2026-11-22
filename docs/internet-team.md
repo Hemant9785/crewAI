@@ -135,3 +135,20 @@ The relay temporarily stores the original signed invitation, including the share
 ## Copying from an EC2 browser terminal
 
 The dashboard displays the current six-digit invite in its header on every tab, even after pressing `y`. Clipboard forwarding from the remote terminal may be ignored by the browser; the dashboard reports a copy request rather than claiming your local clipboard changed. If paste contains old text, read the displayed digits and type them into the teammate dashboard. Do not paste installer commands into the invite field. The invite still expires ten minutes after creation and works once. Full manager application restart recovery remains pending; see the user-flow review before restarting an existing manager session.
+
+### Use a fresh test connection after a manager restart
+
+The current prototype does not recover an automatically generated manager relay credential after full application exit. To test the updated code with a fresh team while retaining the previous database and identity, use a separate test database on EC2 after updating:
+
+```sh
+HERDR_TEAM_DB="$HOME/.local/share/herdr/clipboard-v019.sqlite" herdr
+```
+
+Set up a profile with `p`, create the test team with `c`, then press `i`. Read the six digits from the header and type them into the Windows teammate's `n` form. Keep this manager application open during testing. The original default database is not deleted or replaced by this command. If the Windows profile already belongs to another test team, use a separate Windows test database too:
+
+```powershell
+$env:HERDR_TEAM_DB = Join-Path $env:LOCALAPPDATA 'Herdr\clipboard-v019.sqlite'
+herdr
+```
+
+Set up the Windows implementer profile with `p` and a different member ID from the manager before joining. These separate databases are a temporary test workaround, not completed restart recovery.

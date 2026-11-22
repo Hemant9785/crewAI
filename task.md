@@ -100,11 +100,11 @@ The Access view is inspection-only. The current code has no signed, synchronized
 - [ ] **1.18 Complete readable local answers and in-terminal workflows.**
   - Review findings: Codex executable discovery, clipped answers/messages, contextual slash commands, task history/followups, delivery feedback, and selection viewports.
 
-- [ ] **1.19 Show invite digits when remote clipboard copying is unavailable (user-prioritized bug).**
+- [x] **1.19 Show invite digits when remote clipboard copying is unavailable (user-prioritized bug).**
   - Display the six-digit invite in a fixed dashboard header across tabs, including after copy.
   - Report copy as requested, not confirmed, for unacknowledged terminal clipboard forwarding.
   - Preserve legacy bundle privacy; verify dashboard regressions and publish release binaries.
-  - Progress: implementation complete; verification/release in progress. Review tasks 1.15-1.18 remain pending.
+  - **Completion note (2026-11-22):** The current six-digit invite stays in a fixed header on every dashboard tab, including after copy. Clipboard feedback now says Copy requested because terminal output is not browser clipboard acknowledgement. Legacy invite bundles are excluded from the header. Verification: 14 dashboard tests passed; Windows/Linux release v0.1.9 (`84e7712`, workflow `45027201054`) succeeded, downloaded SHA-256 hashes matched, released Windows binary passed the pairing/approval/rejection/status/task/broadcast smoke, and installed Windows reports v0.1.9. Linux release onboarding passed. Limitations: EC2 browser clipboard forwarding itself is not guaranteed, physical browser verification is pending, and manager restart recovery remains task 1.17. Review tasks 1.15-1.18 remain pending.
 
 ## Known prototype limitations
 
