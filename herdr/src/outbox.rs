@@ -77,13 +77,9 @@ pub(crate) fn authorize_request_execution(
             PermissionAction::ReadRepository,
         ),
     };
-    let decision = store.permission_decision(
-        team_id,
-        &request.requester_member_id,
-        &resource,
-        &action,
-        now,
-    )?;
+    let decision = if matches!(request.kind, RequestKind::Check | RequestKind::Read) {
+        store.question_permission_decision(team_id, &request.requester_member_id, resource_id, Some(request_id), now)?
+    } else { store.permission_decision(team_id, &request.requester_member_id, &resource, &action, now)? };
     if !decision.allowed {
         return Err(QueueError::Unauthorized(request_id.into()));
     }

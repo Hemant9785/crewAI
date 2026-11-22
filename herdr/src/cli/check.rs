@@ -15,7 +15,7 @@ use crate::execution_boundary::{self, CheckExecutionPolicy};
 use crate::identity::DeviceIdentity;
 use crate::outbox;
 use crate::team::{
-    DeliveryState, Event, EventType, PermissionAction, PermissionResource, RequestKind,
+    DeliveryState, Event, EventType, RequestKind,
     RequestRecord, RequestResult,
 };
 use crate::team_storage::TeamStore;
@@ -171,23 +171,7 @@ fn create_request(
         std::io::Error::other(format!("could not load device identity: {error}"))
     })?;
     let mut store = TeamStore::open(database).map_err(storage_error)?;
-    let decision = store
-        .permission_decision(
-            team_id,
-            actor_member_id,
-            &PermissionResource::Repository(repository_id.into()),
-            &PermissionAction::ReadRepository,
-            at,
-        )
-        .map_err(storage_error)?;
-    if !decision.allowed {
-        eprintln!(
-            "check: repository permission denied ({:?})",
-            decision.reason
-        );
-        return Ok(1);
-    }
-
+    // Asking never grants access. The project owner explicitly consents before execution.
     let request_id = format!("check-{}", unique_suffix());
     let request_payload = CheckRequestPayload {
         repository_id: repository_id.into(),
@@ -830,7 +814,7 @@ fn current_unix_seconds() -> u64 {
 fn print_help() {
     eprintln!("herdr check commands:");
     eprintln!("  {CHECK_USAGE}");
-    eprintln!("  create checks ReadRepository permission and queues a signed request.");
+    eprintln!("  create queues a signed question; its owner must consent before execution.");
     eprintln!("  run executes a target request; this Windows build requires --confirm-unisolated.");
     eprintln!(
         "  show reads request status and bounded output using a read-only database connection."
@@ -844,7 +828,7 @@ fn storage_error(error: crate::team_storage::StorageError) -> std::io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::team::{Device, Member, PermissionGrant, Role, Team};
+    use crate::team::{Device, Member, PermissionAction, PermissionResource, PermissionGrant, Role, Team};
     use std::fs;
     use std::path::Path;
 

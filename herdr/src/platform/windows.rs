@@ -5681,3 +5681,7 @@ mod tests {
         }
     }
 }
+
+// Native assistant launch names are platform policy, not UI configuration.
+pub(crate) fn codex_program_names() -> &'static [&'static str] { &["codex.exe"] }
+pub(crate) fn codex_extension_locations() -> &'static [&'static str] { &["bin/windows-x86_64/codex.exe", "bin/windows-aarch64/codex.exe"] }

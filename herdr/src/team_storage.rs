@@ -22,6 +22,8 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+pub(crate) mod permission_events;
+
 pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 6;
 pub(crate) const MAX_OUTBOX_ATTEMPTS: u32 = 5;
 
@@ -758,6 +760,9 @@ impl TeamStore {
         action: &PermissionAction,
         now: u64,
     ) -> Result<PermissionDecision, StorageError> {
+        if let (PermissionResource::Repository(repository), PermissionAction::ReadRepository) = (resource, action) {
+            return self.question_permission_decision(team_id, subject_member_id, repository, None, now);
+        }
         let authority_member_id = self.team_authority(team_id)?;
         let evaluator = self.load_permission_evaluator(team_id, &authority_member_id)?;
         Ok(evaluator.check(subject_member_id, resource, action, now))
@@ -939,6 +944,7 @@ impl TeamStore {
         }
 
         self.validate_task_event(event, created_at, verify_signature)?;
+        if matches!(event.event_type, EventType::RepositoryApproved | EventType::PermissionGranted | EventType::PermissionRevoked) { self.verify_event_signature(event)?; }
         let payload_json = serde_json::to_string(&event.payload)?;
         let transaction = self.connection.transaction()?;
         let changed = transaction.execute(
@@ -1714,6 +1720,7 @@ fn project_event(
     received_at: u64,
 ) -> Result<(), StorageError> {
     if membership_events::apply(transaction, event, received_at)? { return Ok(()); }
+    if permission_events::apply(transaction, event, received_at)? { return Ok(()); }
     match event.event_type {
         EventType::TaskCreated => {
             let payload: TaskCreatedPayload = serde_json::from_value(event.payload.clone())?;

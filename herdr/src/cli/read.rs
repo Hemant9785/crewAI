@@ -1,9 +1,5 @@
 use std::path::PathBuf;
-use std::time::Duration;
 
-use crate::agent_runner::{
-    run_agent, AgentRequest, AgentRunState, CancellationToken, DEFAULT_OUTPUT_LIMIT_BYTES,
-};
 use crate::team_storage::TeamStore;
 
 const READ_USAGE: &str = "usage: herdr read --db PATH --repository-id ID --question TEXT";
@@ -66,49 +62,35 @@ pub(crate) fn run_read_command(args: &[String]) -> std::io::Result<i32> {
         return Ok(1);
     }
 
-    let prompt = format!(
-        "Answer this question using the approved local repository. Do not modify files.\n\nQuestion: {question}"
-    );
-    let request = AgentRequest {
-        request_id: format!("read-{}", std::process::id()),
-        repository_id,
-        program: PathBuf::from("codex.exe"),
-        args: vec![
-            "exec".into(),
-            "--sandbox".into(),
-            "read-only".into(),
-            "--cd".into(),
-            repository.to_string_lossy().into_owned(),
-            "--ephemeral".into(),
-            prompt,
-        ],
-        working_directory: Some(repository),
-        timeout: Duration::from_secs(5 * 60),
-        output_limit_bytes: DEFAULT_OUTPUT_LIMIT_BYTES,
-    };
-    match run_agent(request, &CancellationToken::default()) {
-        Ok(result) if result.state == AgentRunState::Completed => {
-            print!("{}", result.stdout);
-            if !result.stderr.trim().is_empty() {
-                eprintln!("codex: {}", result.stderr.trim());
-            }
-            Ok(result.exit_code.unwrap_or(0))
-        }
-        Ok(result) => {
-            eprintln!(
-                "read: Codex session {:?}; no answer was accepted",
-                result.state
-            );
-            if !result.stderr.trim().is_empty() {
-                eprintln!("codex: {}", result.stderr.trim());
-            }
-            Ok(1)
+    match answer_local(&database, &repository_id, &question) {
+        Ok(answer) => {
+            print!("{answer}");
+            Ok(0)
         }
         Err(error) => {
-            eprintln!("read: could not start the isolated Codex session: {error}");
+            eprintln!("read: {error}");
             Ok(1)
         }
     }
+}
+
+pub(crate) fn answer_local(
+    database: &std::path::Path,
+    repository_id: &str,
+    question: &str,
+) -> Result<String, String> {
+    let store = TeamStore::open_read_only(database)
+        .map_err(|_| "Set up your local profile first".to_string())?;
+    let approval = store
+        .repository_approval(repository_id)
+        .map_err(|e| e.to_string())?
+        .ok_or("Connect and approve a project folder first")?;
+    let repository = std::fs::canonicalize(&approval.local_path)
+        .map_err(|_| "This project folder is unavailable on this computer".to_string())?;
+    if !repository.is_dir() {
+        return Err("The approved project is not a directory".into());
+    }
+    super::assistant::answer(&repository, repository_id, question)
 }
 
 #[cfg(test)]

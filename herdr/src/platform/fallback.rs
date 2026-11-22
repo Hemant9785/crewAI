@@ -277,3 +277,7 @@ pub fn read_clipboard_image() -> Option<ClipboardImage> {
 pub fn show_desktop_notification(_title: &str, _body: Option<&str>) -> std::io::Result<bool> {
     Ok(false)
 }
+
+// Native assistant launch names are platform policy, not UI configuration.
+pub(crate) fn codex_program_names() -> &'static [&'static str] { &["codex"] }
+pub(crate) fn codex_extension_locations() -> &'static [&'static str] { &[] }

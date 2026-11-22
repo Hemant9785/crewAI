@@ -100,6 +100,8 @@ pub(crate) fn run_agent(
     let mut command = noninteractive_process::command(&request.program);
     command
         .args(&request.args)
+        .env_remove("HERDR_RELAY_TOKEN")
+        .env_remove("HERDR_RELAY_URL")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

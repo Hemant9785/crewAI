@@ -2233,3 +2233,7 @@ mod tests {
         assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
     }
 }
+
+// Native assistant launch names are platform policy, not UI configuration.
+pub(crate) fn codex_program_names() -> &'static [&'static str] { &["codex"] }
+pub(crate) fn codex_extension_locations() -> &'static [&'static str] { &["bin/linux-x86_64/codex", "bin/linux-aarch64/codex"] }

@@ -1427,3 +1427,7 @@ printf '%s\n' "$@" > "$HERDR_NOTIFY_ARGS"
         assert!(argv[2].contains("/tmp/herdr scrollback.txt"));
     }
 }
+
+// Native assistant launch names are platform policy, not UI configuration.
+pub(crate) fn codex_program_names() -> &'static [&'static str] { &["codex"] }
+pub(crate) fn codex_extension_locations() -> &'static [&'static str] { &["bin/macos-aarch64/codex", "bin/macos-x86_64/codex"] }
