@@ -1,6 +1,6 @@
 # Feature status
 
-Overall: on track. Board: paste fix active; short-code relay protocol queued.
+Overall: implemented and released as v0.1.6.
 
 ## Readiness
 
@@ -14,7 +14,7 @@ Overall: on track. Board: paste fix active; short-code relay protocol queued.
 
 - Added Dashboard paste-event insertion and modal clipboard-paste targeting.
 - Added two focused regression tests; both passed with `.\tools\build-herdr.ps1 -Mode test -Filter dashboard_join_form`.
-- Next: implement the short-code relay API and client flow; run relay and Rust tests; inspect the diff and update `task.md`.
+- Relay/client implementation and documentation are complete.
 
 ## Risks and limits
 
@@ -28,4 +28,7 @@ Overall: on track. Board: paste fix active; short-code relay protocol queued.
 - Dashboard regression suite: 7 passed.
 - Live isolated manager/member smoke passed: signed payload retrieved unchanged, repeat claim 404, member join, manager approval, relay sync.
 - Deployed Worker version 5d2b9e8e-87b5-416e-a29f-aa411a307823.
-- Windows/Linux binary release v0.1.6 in progress; full Rust suite in progress (baseline has known failures).
+- Release v0.1.6 published from a449469; workflow 45013945310 succeeded. Both downloaded package hashes verified, Windows version is v0.1.6, Linux onboarding/0600 smoke passed.
+- Integrated Rust check passed. Full suite attempted: 2,946 passed, 9 failed, stopped after unrelated transport tests stalled. Physical cross-device UI acceptance remains pending.
+
+Release artifact smoke (2026-11-22): downloaded Windows v0.1.6 binary passed live isolated profile setup, signed short-invite lookup, duplicate-claim rejection, join, approval, and member relay sync. Windows package includes ConPTY runtime and licenses.

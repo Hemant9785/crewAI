@@ -76,7 +76,7 @@ The Access view is inspection-only. The current code has no signed, synchronized
 - [x] **1.12 Fix dashboard paste and support six-digit invites.**
   - Dashboard forms accept terminal paste and clipboard shortcuts.
   - Relay stores signed invitations temporarily; six-digit codes expire after ten minutes and are one use. Signature validation and manager approval remain required.
-  - **Completion note (2026-11-22):** Fixed bracketed paste and clipboard targets in dashboard forms. Added six-digit relay lookup, one successful claim, ten-minute expiry, per-IP attempt limits, alarm cleanup, and legacy invite compatibility. Relay tests (8), typecheck, dashboard tests (7), and live isolated signed invite/join/approval/member-sync smoke passed. Deployed relay version `5d2b9e8e-87b5-416e-a29f-aa411a307823`. Release v0.1.6 builds pending. Limitations: join requests still use long signed clipboard codes; relay operator can read temporary invitations and shared relay tokens; reconnect needs a fresh short code.
+  - **Completion note (2026-11-22):** Fixed bracketed paste and clipboard targets in dashboard forms. Added six-digit relay lookup, one successful claim, ten-minute expiry, per-IP attempt limits, alarm cleanup, and legacy invite compatibility. Relay tests (8), typecheck, dashboard tests (7), and live isolated signed invite/join/approval/member-sync smoke passed. Deployed relay version `5d2b9e8e-87b5-416e-a29f-aa411a307823`. Published Windows/Linux release `v0.1.6` from `a449469`; workflow `45013945310` succeeded and both downloaded archives matched SHA-256 checksums. Windows reports `herdr v0.1.6`; Linux release onboarding/0600 identity smoke passed. Full suite attempted: 2,946 passed, 9 failed before two unrelated transport tests stalled; stopped the stalled run. Integrated Rust check passed. Limitations: join requests still use long signed clipboard codes; relay operator can read temporary invitations and shared relay tokens; reconnect needs a fresh short code.
 
 ## Known prototype limitations
 
@@ -85,3 +85,5 @@ The Access view is inspection-only. The current code has no signed, synchronized
 - A physical two-laptop Internet acceptance run remains outstanding.
 - Windows remote checks require explicit unisolated confirmation because an OS-enforced read-only boundary is unavailable.
 - The one-command release installer currently supports Linux x86_64 and Windows x86_64; Linux ARM64 and macOS releases are pending.
+
+Release artifact smoke (2026-11-22): downloaded Windows v0.1.6 binary passed live isolated profile setup, signed short-invite lookup, duplicate-claim rejection, join, approval, and member relay sync. Windows package includes ConPTY runtime and licenses.
