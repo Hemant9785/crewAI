@@ -1,4 +1,4 @@
-﻿# Sketch-driven team workspace tasks
+# Sketch-driven team workspace tasks
 
 This is the ordered implementation checklist derived from the code-to-sketch comparison. Implement one numbered task at a time. Check off an item only after the behavior and verification below are complete.
 
@@ -82,7 +82,7 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Entering an invite submits the signed join request to a bounded persistent relay inbox.
   - Manager sees pending names/devices in Requests and approves or rejects without a return code.
   - Poll requester decision status, preserve signature and invitation checks, verify replay/authorization, and publish updated binaries.
-  - **Completion note (2026-11-22):** Added bounded persistent signed pairing inbox, automatic dashboard submission, authority-only request listing and decisions, five-second dashboard polling, requester decision status, and selected-request approval/rejection with no pasted return code. Decisions bind to the exact signed request; original local invitation/signature checks still gate membership. Legacy manual approval uses capital `A`. Verification: relay tests (10), typecheck, dashboard tests (9), integrated Rust build/check, and live isolated approval/rejection/status/member-sync smoke passed. Deployed relay `5edaf382-6d56-4abf-ac6a-af83bcf232af`. Release v0.1.7 pending. Limitations: inbox polling requires an open dashboard; pairing metadata expires after seven days on access; credentials remain session-only and reconnect needs a fresh invite. Broad suite has existing failures and transport stalls.
+  - **Completion note (2026-11-22):** Added bounded persistent signed pairing inbox, automatic dashboard submission, authority-only request listing and decisions, five-second dashboard polling, requester decision status, and selected-request approval/rejection with no pasted return code. Decisions bind to the exact signed request; original local invitation/signature checks still gate membership. Legacy manual approval uses capital `A`. Verification: relay tests (10), typecheck, dashboard tests (9), integrated Rust build/check, and live isolated approval/rejection/status/member-sync smoke passed. Deployed relay `5edaf382-6d56-4abf-ac6a-af83bcf232af`. Published Windows/Linux release `v0.1.7` from `544ce94`; workflow `45016653224` succeeded. Both downloaded hashes verified; released Windows binary passed approval/rejection/status/task/broadcast sync smoke, and Linux release onboarding passed. Limitations: inbox polling requires an open dashboard; pairing metadata expires after seven days on access; credentials remain session-only and reconnect needs a fresh invite. Broad suite attempted with two known stalled tests excluded: 3,492 passed, 44 failed; stopped after two other transport stalls.
 
 ## Known prototype limitations
 
@@ -93,3 +93,4 @@ The Access view is inspection-only. The current code has no signed, synchronized
 - The one-command release installer currently supports Linux x86_64 and Windows x86_64; Linux ARM64 and macOS releases are pending.
 
 Release artifact smoke (2026-11-22): downloaded Windows v0.1.6 binary passed live isolated profile setup, signed short-invite lookup, duplicate-claim rejection, join, approval, and member relay sync. Windows package includes ConPTY runtime and licenses.
+
