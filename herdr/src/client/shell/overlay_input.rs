@@ -758,7 +758,7 @@ impl ClientShellState {
                                 .actions
                                 .push(ClientShellAction::ClipboardWrite(code.as_bytes().to_vec()));
                             dashboard.status =
-                                "Code copied. Share it privately with your teammate.".into();
+                                "Copy requested. If paste still shows old text, type the six-digit invite shown above.".into();
                         } else {
                             dashboard.status =
                                 "Create an invite code or join request first.".into();

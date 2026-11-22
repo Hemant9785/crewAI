@@ -131,3 +131,7 @@ The Worker is deployed to the project owner's Cloudflare account, and `GET /heal
 ## Short invite storage
 
 The relay temporarily stores the original signed invitation, including the shared relay token, so a six-digit code can retrieve it. The relay operator can read this payload. Successful retrieval deletes the code; unused codes expire after ten minutes and are cleaned up by an alarm. Each IP is limited to ten claim attempts per ten minutes. Manager approval and client signature validation remain required. Legacy long invite codes still work. For a custom relay, set `HERDR_RELAY_URL` on the joining device before entering a short code. Manual signed-request approval remains available through capital `A` for compatibility; normal dashboard joining does not need a return code.
+
+## Copying from an EC2 browser terminal
+
+The dashboard displays the current six-digit invite in its header on every tab, even after pressing `y`. Clipboard forwarding from the remote terminal may be ignored by the browser; the dashboard reports a copy request rather than claiming your local clipboard changed. If paste contains old text, read the displayed digits and type them into the teammate dashboard. Do not paste installer commands into the invite field. The invite still expires ten minutes after creation and works once. Full manager application restart recovery remains pending; see the user-flow review before restarting an existing manager session.

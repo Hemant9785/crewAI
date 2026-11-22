@@ -144,6 +144,7 @@ task in Agents; this pane-to-task link is local to the current Herdr session.
 Dashboard team creation configures the project relay automatically; no relay environment variables are needed for a fresh session. Keep the manager application open during testing: generated connection credentials are currently session-only and full manager restart recovery is not implemented.
 
 For a first teammate: press `i`, then `y` to share the six-digit invite privately.
+The six digits stay visible in the dashboard header. In an EC2/browser terminal, clipboard forwarding may not update your computer clipboard; type the visible digits manually if paste shows old content. A copy request is not a confirmation from the browser.
 The teammate sets up their profile with `p`, presses `n`, and enters the six digits.
 Their signed join request is sent automatically. On the manager dashboard, open
 **4 Requests**, select the teammate with `j`/`k`, then press `a` to approve or `x`

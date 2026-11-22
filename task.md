@@ -100,6 +100,12 @@ The Access view is inspection-only. The current code has no signed, synchronized
 - [ ] **1.18 Complete readable local answers and in-terminal workflows.**
   - Review findings: Codex executable discovery, clipped answers/messages, contextual slash commands, task history/followups, delivery feedback, and selection viewports.
 
+- [ ] **1.19 Show invite digits when remote clipboard copying is unavailable (user-prioritized bug).**
+  - Display the six-digit invite in a fixed dashboard header across tabs, including after copy.
+  - Report copy as requested, not confirmed, for unacknowledged terminal clipboard forwarding.
+  - Preserve legacy bundle privacy; verify dashboard regressions and publish release binaries.
+  - Progress: implementation complete; verification/release in progress. Review tasks 1.15-1.18 remain pending.
+
 ## Known prototype limitations
 
 - Permission inspection is available; permission grant/revoke UI needs a signed synchronized domain command.

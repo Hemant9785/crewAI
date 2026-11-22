@@ -197,6 +197,23 @@ fn render_team_dashboard_overlay(
         Style::default().fg(p.overlay0).bg(p.panel_bg),
     );
 
+    if let Some(code) = dashboard
+        .share_code
+        .as_deref()
+        .filter(|code| crate::cli::relay::is_short_invite_code(code))
+    {
+        put_text(
+            b,
+            i.x,
+            i.y.saturating_add(2),
+            i.width,
+            &format!(" INVITE CODE: {code}  (10 minutes, one use)  y: request copy"),
+            Style::default()
+                .fg(p.accent)
+                .bg(p.panel_bg)
+                .add_modifier(Modifier::BOLD),
+        );
+    }
     let tab_y = i.y.saturating_add(3);
     let mut tab_x = i.x;
     for (index, section) in ClientTeamDashboardSection::ALL.iter().enumerate() {

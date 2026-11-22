@@ -34,6 +34,78 @@ fn dashboard_with_join_form() -> ClientShellState {
 }
 
 #[test]
+fn invite_digits_remain_visible_after_copy_request_on_every_dashboard_tab() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let ClientShellOverlay::TeamDashboard(mut d) = dashboard_without_database() else {
+        unreachable!()
+    };
+    d.snapshot = Ok(crate::team_view::TeamDashboardSnapshot::empty());
+    d.share_code = Some("123456".into());
+    state.overlay = Some(ClientShellOverlay::TeamDashboard(d));
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Key(
+        crate::input::TerminalKey::new(KeyCode::Char('y'), KeyModifiers::empty()),
+    )]);
+    assert!(outcome.actions.iter().any(
+        |action| matches!(action, ClientShellAction::ClipboardWrite(bytes) if bytes == b"123456")
+    ));
+    for section in ClientTeamDashboardSection::ALL {
+        let Some(ClientShellOverlay::TeamDashboard(d)) = state.overlay.as_mut() else {
+            panic!("dashboard");
+        };
+        d.section = *section;
+        assert!(d.status.starts_with("Copy requested."));
+        assert!(!d.status.contains("Code copied"));
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 106, 30));
+        render::render_client_overlay(
+            &mut buffer,
+            state.overlay.as_ref().unwrap(),
+            state.snapshot.as_deref().unwrap(),
+            &state.endpoints,
+            &state.active_endpoint_id,
+            &state.config.keybinds,
+            &state.config.palette,
+        )
+        .unwrap();
+        let text = buffer
+            .content()
+            .iter()
+            .map(|c| c.symbol())
+            .collect::<String>();
+        assert!(text.contains("INVITE CODE: 123456"));
+    }
+}
+
+#[test]
+fn invite_header_does_not_display_a_legacy_bundle() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    let ClientShellOverlay::TeamDashboard(mut d) = dashboard_without_database() else {
+        unreachable!()
+    };
+    d.share_code = Some("HERDR-INVITE-1:bundle-with-relay-credential".into());
+    let mut buffer = Buffer::empty(Rect::new(0, 0, 106, 30));
+    render::render_client_overlay(
+        &mut buffer,
+        &ClientShellOverlay::TeamDashboard(d),
+        state.snapshot.as_deref().unwrap(),
+        &state.endpoints,
+        &state.active_endpoint_id,
+        &state.config.keybinds,
+        &state.config.palette,
+    )
+    .unwrap();
+    let text = buffer
+        .content()
+        .iter()
+        .map(|c| c.symbol())
+        .collect::<String>();
+    assert!(!text.contains("bundle-with-relay-credential"));
+}
+
+#[test]
 fn team_creation_configures_relay_without_shell_variables_and_preserves_retry_token() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.overlay = Some(dashboard_without_database());
