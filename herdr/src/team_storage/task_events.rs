@@ -265,6 +265,75 @@ mod tests {
         clean(store, [db, owner_path, peer_path]);
     }
     #[test]
+    fn explicit_task_grants_work_and_revocation_stops_unrelated_writers() {
+        let (mut store, owner, peer, db, owner_path, peer_path) = fixture("grants");
+        let create = created(&peer, "peer", "owner");
+        assert!(store.insert_verified_event(&create, 1).is_err());
+        store
+            .grant_permission(
+                "team-policy",
+                &PermissionGrant {
+                    grant_id: "task-create-grant".into(),
+                    subject_member_id: "peer".into(),
+                    resource: PermissionResource::Team("team-policy".into()),
+                    action: PermissionAction::CreateTask,
+                    grantor_member_id: "owner".into(),
+                    delegable: false,
+                    expires_at: None,
+                    revoked: false,
+                },
+                1,
+            )
+            .unwrap();
+        assert!(store.insert_verified_event(&create, 2).unwrap());
+        let update = signed(
+            &peer,
+            "peer",
+            EventType::TaskStatusChanged,
+            json!({"task_id":"task-policy","status":"Delivered"}),
+            3,
+        );
+        assert!(store.insert_verified_event(&update, 3).is_err());
+        store
+            .grant_permission(
+                "team-policy",
+                &PermissionGrant {
+                    grant_id: "task-update-grant".into(),
+                    subject_member_id: "peer".into(),
+                    resource: PermissionResource::Task("task-policy".into()),
+                    action: PermissionAction::UpdateTask,
+                    grantor_member_id: "owner".into(),
+                    delegable: false,
+                    expires_at: None,
+                    revoked: false,
+                },
+                3,
+            )
+            .unwrap();
+        assert!(store.insert_verified_event(&update, 4).unwrap());
+        store
+            .revoke_permission("team-policy", "task-update-grant", "owner", 5)
+            .unwrap();
+        let next = signed(
+            &peer,
+            "peer",
+            EventType::TaskStatusChanged,
+            json!({"task_id":"task-policy","status":"InProgress"}),
+            6,
+        );
+        assert!(store.insert_verified_event(&next, 6).is_err());
+        let own = signed(
+            &owner,
+            "owner",
+            EventType::TaskStatusChanged,
+            json!({"task_id":"task-policy","status":"InProgress"}),
+            6,
+        );
+        assert!(store.insert_verified_event(&own, 6).unwrap());
+        clean(store, [db, owner_path, peer_path]);
+    }
+
+    #[test]
     fn remote_task_status_history_converges_despite_reverse_delivery_and_redundancy() {
         let (mut first, owner, peer, a, ak, ap) = fixture("first");
         let second_path = a.with_extension("second.sqlite");

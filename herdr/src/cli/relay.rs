@@ -235,11 +235,9 @@ pub(super) fn sync_team(
         let mut envelopes = Vec::with_capacity(events.len());
         for event in events {
             let public_key = store
-                .device_public_key(&event.device_id)
+                .event_device_public_key(&event.device_id)
                 .map_err(|error| error.to_string())?
-                .ok_or_else(|| {
-                    format!("no active public key for event device {}", event.device_id)
-                })?;
+                .ok_or_else(|| format!("no public key for event device {}", event.device_id))?;
             envelopes.push(Envelope { event, public_key });
         }
         if envelopes.is_empty() {

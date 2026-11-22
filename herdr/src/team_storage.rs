@@ -1109,6 +1109,12 @@ impl TeamStore {
             .map_err(StorageError::from)
     }
 
+    /// Envelope upload needs historical public keys for identical relay records;
+    /// incoming authorization continues to require the active device lookup.
+    pub(crate) fn event_device_public_key(&self, device_id: &str) -> Result<Option<String>, StorageError> {
+        self.connection.query_row("SELECT public_key FROM devices WHERE device_id=?1", params![device_id], |row| row.get(0)).optional().map_err(StorageError::from)
+    }
+
     pub(crate) fn relay_cursor(&self, team_id: &str) -> Result<u64, StorageError> {
         Ok(self
             .connection
