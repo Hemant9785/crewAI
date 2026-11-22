@@ -1,6 +1,6 @@
 # Internet team prototype
 
-Herdr can exchange signed team events through the optional Cloudflare relay when teammates are on different networks. The relay carries bounded team events only; it never receives repository files or repository paths. Use `s` in the Team Dashboard to sync after reconnecting. Automatic background reconnect is not implemented yet.
+Herdr can exchange signed team events through the optional Cloudflare relay when teammates are on different networks. The relay carries bounded team events only; it never receives repository files or repository paths. Use `s` in the Team Dashboard to sync after reconnecting. Background sync runs while the session has relay credentials.
 
 ## Deploy the relay
 
@@ -35,8 +35,8 @@ Use the dashboard shortcuts to complete team setup:
 
 1. Press `p` on each laptop. Enter a unique member ID, display name, role, repository ID, and that laptop's local repository folder.
 2. On the manager laptop, press `c` and enter a team name.
-3. Press `i`, then `y` to copy a signed invite code. Send it only to the intended teammate through a private channel; it includes the shared relay credential.
-4. On the teammate laptop, press `n` and paste the invite code. After joining, press `y` to copy the signed join-request code and send it privately back to the manager.
+3. Press `i`, then `y` to copy a six-digit invite code (one use, valid for ten minutes). Send it only to the intended teammate through a private channel; it retrieves the signed invitation and shared relay credential.
+4. On the teammate laptop, press `n` and type the six-digit invite code. After joining, press `y` to copy the signed join-request code and send it privately back to the manager.
 5. On the manager laptop, press `a` and paste the join-request code. Herdr verifies it and publishes the approval.
 6. Press `s` on the teammate laptop to fetch the new membership. After approval, `t` assigns a task, `b` broadcasts to the team, and `r` asks local Codex about that laptop's approved repository.
 
@@ -45,7 +45,7 @@ from the dashboard. Invite and join-request codes are copied through the
 clipboard and still need a private person-to-person handoff. Herdr does not
 create JSON files for this dashboard flow. Relay credentials obtained from an
 invite stay in Herdr's memory for the current session. After restarting Herdr,
-press `n` and paste the same invite code to reconnect without accepting the
+ask the manager for a fresh six-digit code, then press `n` to reconnect without accepting the
 invitation a second time. The manager's existing `HERDR_RELAY_URL` and
 `HERDR_RELAY_TOKEN` settings remain in use.
 
@@ -128,3 +128,7 @@ Herdr starts a separate `codex.exe exec --sandbox read-only --ephemeral` process
 The local two-profile walkthrough passed against `wrangler dev`: team creation, signed invitation, join request, authority approval, relay sync, remote task projection, and remote broadcast projection. The Rust cursor and `/read` authorization tests pass, and the relay Worker tests, TypeScript type check, and Wrangler deployment dry run pass.
 
 The Worker is deployed to the project owner's Cloudflare account, and `GET /healthz` returned HTTP 200 with `{"status":"ok","protocol_version":1}`. A physical second-laptop Internet run has not been performed. Until a background reconnect service is added, run `herdr relay sync` on the receiving device to pull events. The shared bearer token must be rotated out-of-band if a teammate loses access; automated token rotation and membership revocation commands are not part of this prototype.
+
+## Short invite storage
+
+The relay temporarily stores the original signed invitation, including the shared relay token, so a six-digit code can retrieve it. The relay operator can read this payload. Successful retrieval deletes the code; unused codes expire after ten minutes and are cleaned up by an alarm. Each IP is limited to ten claim attempts per ten minutes. Manager approval and client signature validation remain required. Legacy long invite codes still work. For a custom relay, set `HERDR_RELAY_URL` on the joining device before entering a short code. Join-request codes remain long; use terminal paste or Ctrl+Shift+V in dashboard forms.

@@ -10,6 +10,85 @@ const MAX_UPLOAD_EVENTS: usize = 1;
 const MAX_PAGE_EVENTS: usize = 128;
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
 
+pub(crate) const DEFAULT_RELAY_URL: &str =
+    "https://team-ai-relay.spicygames-hemant9785.workers.dev";
+
+pub(crate) fn publish_invite_code(
+    endpoint: &str,
+    team_id: &str,
+    token: &str,
+    invite_code: &str,
+) -> Result<String, String> {
+    let endpoint = validate_endpoint(endpoint).map_err(str::to_owned)?;
+    if team_id.is_empty()
+        || !team_id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err("Invalid team ID".into());
+    }
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(15)))
+        .build()
+        .new_agent();
+    let response = agent
+        .post(format!("{endpoint}/v1/teams/{team_id}/invite-codes"))
+        .header("Authorization", &format!("Bearer {token}"))
+        .send_json(serde_json::json!({"invite_code": invite_code}))
+        .map_err(|_| {
+            "Could not create short invite. Check relay connection and version.".to_string()
+        })?;
+    let body: serde_json::Value = response
+        .into_body()
+        .with_config()
+        .limit(32 * 1024)
+        .read_json()
+        .map_err(|_| "Invalid short invite response".to_string())?;
+    let code = body["code"].as_str().ok_or("Missing invite code")?;
+    if !is_short_invite_code(code) {
+        return Err("Invalid short invite code".into());
+    }
+    Ok(code.to_owned())
+}
+
+pub(crate) fn is_short_invite_code(code: &str) -> bool {
+    code.len() == 6 && code.bytes().all(|b| b.is_ascii_digit())
+}
+
+pub(crate) fn claim_invite_code(endpoint: &str, code: &str) -> Result<String, String> {
+    if !is_short_invite_code(code) {
+        return Err("Enter a six-digit invite code".into());
+    }
+    let endpoint = validate_endpoint(endpoint).map_err(str::to_owned)?;
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(Duration::from_secs(15)))
+        .build()
+        .new_agent();
+    let response = agent
+        .get(format!("{endpoint}/v1/invites/{code}"))
+        .call()
+        .map_err(|error| match error {
+            ureq::Error::StatusCode(404) => {
+                "Invite expired, already used, or incorrect. Ask the manager for a new code."
+                    .to_string()
+            }
+            ureq::Error::StatusCode(429) => {
+                "Too many invite attempts. Try again in ten minutes.".to_string()
+            }
+            _ => "Could not retrieve invite. Check relay connection.".to_string(),
+        })?;
+    let body: serde_json::Value = response
+        .into_body()
+        .with_config()
+        .limit(32 * 1024)
+        .read_json()
+        .map_err(|_| "Invalid invite response".to_string())?;
+    body["invite_code"]
+        .as_str()
+        .map(str::to_owned)
+        .ok_or("Missing signed invite".into())
+}
+
 #[derive(Serialize)]
 struct Upload<'a> {
     events: Vec<Envelope<'a>>,

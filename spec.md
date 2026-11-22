@@ -28,6 +28,8 @@ The relay stores only bounded, signed team events and delivery metadata. It neve
 
 The first version does not include repository synchronization, automatic code changes, multi-device identity, or permission delegation unless a later decision explicitly adds them.
 
+Approved prototype extension (2026-11-22): dashboard invitations use a six-digit relay lookup code, valid for ten minutes and one successful claim. The relay temporarily stores the signed invitation bundle, including its shared relay token; the relay operator can read this bundle. Clients still verify the original signature and require explicit manager approval. Legacy signed invite strings remain accepted. Expired codes are rejected and cleaned up by a Durable Object alarm. Short codes are shared privately and claim attempts are limited per IP.
+
 ## Commands
 
 ### `/task @person <description>`

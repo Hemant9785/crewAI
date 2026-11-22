@@ -126,6 +126,53 @@ describe("team relay", () => {
     expect((await fetchPage(teamId, 0, 10, TOKEN)).status).toBe(401);
     expect((await fetchPage(teamId, 0, 10, nextToken)).status).toBe(200);
   });
+
+  it("issues a short invite code for a team token and allows one claim", async () => {
+    const teamId = "team-short-invite";
+    const bootstrap = await signedEnvelope(teamId, "team.created", "evt-bootstrap-short-invite");
+    expect((await upload(teamId, [bootstrap])).status).toBe(200);
+
+    const inviteCode = `HERDR-INVITE-1:${"A".repeat(180)}`;
+    const issued = await createShortInvite(teamId, inviteCode);
+    expect(issued.status).toBe(201);
+    const { code, expires_at: expiresAt } = await issued.json<{ code: string; expires_at: number }>();
+    expect(code).toMatch(/^\d{6}$/);
+    expect(expiresAt - Date.now()).toBeGreaterThan(9 * 60 * 1000);
+    expect(expiresAt - Date.now()).toBeLessThanOrEqual(10 * 60 * 1000);
+
+    const claimed = await claimShortInvite(code, "192.0.2.10");
+    expect(claimed.status).toBe(200);
+    expect(await claimed.json()).toEqual({ invite_code: inviteCode });
+    expect((await claimShortInvite(code, "192.0.2.10")).status).toBe(404);
+  });
+
+  it("requires a team token to publish short invites and limits failed claims", async () => {
+    const teamId = "team-short-invite-auth";
+    const bootstrap = await signedEnvelope(teamId, "team.created", "evt-bootstrap-short-invite-auth");
+    expect((await upload(teamId, [bootstrap])).status).toBe(200);
+
+    const denied = await exports.default.fetch!(new Request(`https://relay.test/v1/teams/${teamId}/invite-codes`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ invite_code: "HERDR-INVITE-1:payload" }),
+    }));
+    expect(denied.status).toBe(401);
+
+    for (let attempt = 0; attempt < 10; attempt += 1) {
+      expect((await claimShortInvite(String(attempt).padStart(6, "0"), "192.0.2.11")).status).toBe(404);
+    }
+    expect((await claimShortInvite("999999", "192.0.2.11")).status).toBe(429);
+  });
+
+  it("rejects malformed short invite codes and invite payloads", async () => {
+    expect((await claimShortInvite("abc123", "192.0.2.12")).status).toBe(400);
+
+    const teamId = "team-short-invite-malformed";
+    const bootstrap = await signedEnvelope(teamId, "team.created", "evt-bootstrap-short-invite-malformed");
+    expect((await upload(teamId, [bootstrap])).status).toBe(200);
+    const invalidPayload = await createShortInvite(teamId, "not-a-signed-invite");
+    expect(invalidPayload.status).toBe(400);
+  });
 });
 
 interface TestIdentity {
@@ -229,6 +276,23 @@ async function rotateToken(
       public_key: identity.publicKeyBase64,
       signature,
     }),
+  }));
+}
+
+async function createShortInvite(teamId: string, inviteCode: string, token = TOKEN): Promise<Response> {
+  return exports.default.fetch!(new Request(`https://relay.test/v1/teams/${teamId}/invite-codes`, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ invite_code: inviteCode }),
+  }));
+}
+
+async function claimShortInvite(code: string, ip: string): Promise<Response> {
+  return exports.default.fetch!(new Request(`https://relay.test/v1/invites/${code}`, {
+    headers: { "CF-Connecting-IP": ip },
   }));
 }
 

@@ -9,10 +9,12 @@
   },
   "durable_objects": {
     "bindings": [
-      { "name": "TEAM_RELAY", "class_name": "TeamRelay" }
+      { "name": "TEAM_RELAY", "class_name": "TeamRelay" },
+      { "name": "INVITE_CODES", "class_name": "InviteCodeRegistry" }
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_sqlite_classes": ["TeamRelay"] }
+    { "tag": "v1", "new_sqlite_classes": ["TeamRelay"] },
+    { "tag": "v2", "new_sqlite_classes": ["InviteCodeRegistry"] }
   ]
 }

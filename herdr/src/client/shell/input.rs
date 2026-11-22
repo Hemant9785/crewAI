@@ -588,6 +588,15 @@ impl ClientShellState {
                     search_focused: true,
                     ..
                 }))
+                | Some(ClientShellOverlay::TeamDashboard(
+                    ClientTeamDashboardOverlay {
+                        form: Some(ClientTeamDashboardForm {
+                            member_picker_active: false,
+                            ..
+                        }),
+                        ..
+                    }
+                ))
         )
     }
 

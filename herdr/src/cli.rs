@@ -34,7 +34,7 @@ pub(crate) mod plugin;
 pub(crate) mod projection;
 mod protocol_guard;
 mod read;
-mod relay;
+pub(crate) mod relay;
 mod server;
 mod server_not_running;
 mod spec;

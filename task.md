@@ -73,6 +73,11 @@ The Access view is inspection-only. The current code has no signed, synchronized
   - Verify profile creation and identity reload in the Linux release build.
   - **Progress note (2026-11-21):** EC2 profile setup failed because Linux key storage was unsupported and the dashboard defaulted to `/tmp`. The owner explicitly approved an unencrypted, owner-only Linux identity file for this prototype. Published release `v0.1.5`; its Linux release smoke created the profile database and identity file and verified identity mode `0600`. Focused Windows-hosted tests passed for identity round-trip (2) and persistent path selection (1). Manual EC2 setup retest remains pending. Limitation: Linux identity keys are not encrypted at rest.
 
+- [x] **1.12 Fix dashboard paste and support six-digit invites.**
+  - Dashboard forms accept terminal paste and clipboard shortcuts.
+  - Relay stores signed invitations temporarily; six-digit codes expire after ten minutes and are one use. Signature validation and manager approval remain required.
+  - **Completion note (2026-11-22):** Fixed bracketed paste and clipboard targets in dashboard forms. Added six-digit relay lookup, one successful claim, ten-minute expiry, per-IP attempt limits, alarm cleanup, and legacy invite compatibility. Relay tests (8), typecheck, dashboard tests (7), and live isolated signed invite/join/approval/member-sync smoke passed. Deployed relay version `5d2b9e8e-87b5-416e-a29f-aa411a307823`. Release v0.1.6 builds pending. Limitations: join requests still use long signed clipboard codes; relay operator can read temporary invitations and shared relay tokens; reconnect needs a fresh short code.
+
 ## Known prototype limitations
 
 - Permission inspection is available; permission grant/revoke UI needs a signed synchronized domain command.

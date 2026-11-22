@@ -124,8 +124,8 @@ Dashboard shortcuts:
 | --- | --- |
 | `p` | Set up this device's profile and approved repository |
 | `c` | Create the team |
-| `i` | Create a signed invite code; press `y` to copy it |
-| `n` | Paste an invite code, or reconnect with it after restart |
+| `i` | Create a six-digit invite (10 minutes, one use); `y` copies it |
+| `n` | Type six digits or paste a legacy invite code |
 | `a` | Paste and approve a teammate's signed join request code |
 | `t` | Enter a task description, then select one or more team members with `Space`; press `Enter` to assign |
 | `b` | Broadcast a team message |
@@ -141,13 +141,12 @@ attention. Right-click an agent pane and choose **Link team task** to show its
 task in Agents; this pane-to-task link is local to the current Herdr session.
 
 For a first teammate: press `i`, then `y` to copy the invite code. Send it
-privately to them. They set up their device with `p`, press `n`, and paste the
+privately to them. They set up their device with `p`, press `n`, and type the six-digit
 code. They press `y` to copy their signed join request and send it privately
-back to you. Press `a` and paste that request to approve the new member. Invite
-codes include the team's relay credential, so never commit or post one publicly.
+back to you. Press `a` and paste that request to approve the new member. The relay temporarily stores the signed invitation and shared relay credential; its operator can read them. Share codes privately.
 Herdr keeps the credential in memory for the current session and starts
 background relay sync after a successful invite, join, or approval. After a
-restart, the teammate can paste the same valid invite again to reconnect.
+restart, ask the manager for a new six-digit invite and use `n` to reconnect. Join-request approval still uses a longer signed code; terminal paste and Ctrl+Shift+V are supported in dashboard forms.
 
 ## Initialize a local profile from the UI
 

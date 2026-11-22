@@ -14,6 +14,63 @@ fn dashboard_without_database() -> ClientShellOverlay {
     })
 }
 
+fn dashboard_with_join_form() -> ClientShellState {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let mut dashboard = match dashboard_without_database() {
+        ClientShellOverlay::TeamDashboard(dashboard) => dashboard,
+        _ => unreachable!(),
+    };
+    dashboard.form = Some(ClientTeamDashboardForm {
+        action: ClientTeamDashboardAction::Join,
+        fields: vec![("Invite code".into(), TextEditor::default())],
+        current: 0,
+        member_picker_active: false,
+        member_cursor: 0,
+        selected_member_ids: Vec::new(),
+    });
+    state.overlay = Some(ClientShellOverlay::TeamDashboard(dashboard));
+    state
+}
+
+#[test]
+fn dashboard_join_form_accepts_terminal_paste_events() {
+    let mut state = dashboard_with_join_form();
+    let invite = "HERDR-INVITE-1:short-or-long-invite";
+
+    let outcome = state.handle_raw_events(vec![RawInputEvent::Paste(invite.into())]);
+
+    assert!(outcome.repaint);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::TeamDashboard(ClientTeamDashboardOverlay {
+            form: Some(ClientTeamDashboardForm { fields, .. }),
+            ..
+        })) if fields[0].1.as_str() == invite
+    ));
+}
+
+#[test]
+fn dashboard_join_form_is_a_modal_clipboard_paste_target() {
+    let mut state = dashboard_with_join_form();
+    let mut outcome = ClientShellInput::default();
+    let key = crate::input::TerminalKey::new(
+        KeyCode::Char('v'),
+        KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+    );
+
+    assert!(state.modal_paste_target_active());
+    assert!(state
+        .handle_modal_paste_shortcut_with(&key, &mut outcome, || { Some("manual-invite".into()) }));
+    assert!(outcome.repaint);
+    assert!(matches!(
+        state.overlay,
+        Some(ClientShellOverlay::TeamDashboard(ClientTeamDashboardOverlay {
+            form: Some(ClientTeamDashboardForm { fields, .. }),
+            ..
+        })) if fields[0].1.as_str() == "manual-invite"
+    ));
+}
+
 #[test]
 fn task_assignment_form_opens_multi_member_picker_and_toggles_selection() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));

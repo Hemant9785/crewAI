@@ -475,6 +475,19 @@ impl ClientShellState {
                 }
                 true
             }
+            Some(ClientShellOverlay::TeamDashboard(dashboard)) => {
+                let Some(form) = dashboard.form.as_mut() else {
+                    return false;
+                };
+                if form.member_picker_active {
+                    return false;
+                }
+                let Some((_, editor)) = form.fields.get_mut(form.current) else {
+                    return false;
+                };
+                editor.insert(text);
+                true
+            }
             _ => false,
         }
     }
@@ -1147,7 +1160,7 @@ impl ClientShellState {
                 return;
             }
             ClientTeamDashboardAction::Join => {
-                vec![("Invite code (paste)".into(), TextEditor::default())]
+                vec![("Invite code (6 digits or paste)".into(), TextEditor::default())]
             }
             ClientTeamDashboardAction::Approve => {
                 vec![("Join request code (paste)".into(), TextEditor::default())]
@@ -1485,7 +1498,7 @@ impl ClientShellState {
                 actor = snapshot.profile.as_ref().map(|m| m.member_id.clone());
             }
         }
-        if action == Action::Join {
+        if action == Action::Join && !crate::cli::relay::is_short_invite_code(values[0].trim()) {
             if let (Some(team_id), Some(authority_id)) = (team.as_ref(), authority.as_ref()) {
                 let bundle = crate::cli::team::decode_invite_code(&values[0])
                     .map_err(|error| error.to_string())?;
@@ -1533,17 +1546,47 @@ impl ClientShellState {
                                 &database, team_id, &identity,
                             )
                             .map_err(|error| error.to_string())?;
-                            result.share_code = Some(
-                                crate::cli::team::encode_invite_code(&bundle)
-                                    .map_err(|error| error.to_string())?,
-                            );
+                            let signed_code = crate::cli::team::encode_invite_code(&bundle)
+                                .map_err(|error| error.to_string())?;
+                            result.share_code = Some(crate::cli::relay::publish_invite_code(
+                                &bundle.relay_url,
+                                team_id,
+                                &bundle.relay_token,
+                                &signed_code,
+                            )?);
                             result.relay_credentials =
                                 Some((bundle.relay_url.clone(), bundle.relay_token.clone()));
-                            result.status = "Invite code ready. Press y to copy it, then send it privately to your teammate.".into();
+                            result.status = "Six-digit invite ready (one use, expires in 10 minutes). Press y to copy and share privately.".into();
                         }
                         Action::Join => {
-                            let bundle = crate::cli::team::decode_invite_code(&input_code)
+                            let input_code = input_code.trim();
+                            let signed_code = if crate::cli::relay::is_short_invite_code(input_code)
+                            {
+                                let endpoint =
+                                    std::env::var("HERDR_RELAY_URL").unwrap_or_else(|_| {
+                                        crate::cli::relay::DEFAULT_RELAY_URL.into()
+                                    });
+                                crate::cli::relay::claim_invite_code(&endpoint, input_code)?
+                            } else {
+                                input_code.to_owned()
+                            };
+                            let bundle = crate::cli::team::decode_invite_code(&signed_code)
                                 .map_err(|error| error.to_string())?;
+                            if let (Some(team_id), Some(authority_id)) =
+                                (team_id.as_ref(), authority.as_ref())
+                            {
+                                crate::cli::team::validate_invite_for_existing_team(
+                                    &bundle,
+                                    team_id,
+                                    authority_id,
+                                )
+                                .map_err(|error| error.to_string())?;
+                                result.relay_credentials =
+                                    Some((bundle.relay_url, bundle.relay_token));
+                                result.status =
+                                    "Invite verified. Background relay sync is ready.".into();
+                                return Ok(());
+                            }
                             let request = crate::cli::team::accept_invite_bundle(
                                 &database, &identity, &bundle,
                             )

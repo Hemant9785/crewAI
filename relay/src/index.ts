@@ -20,6 +20,7 @@ import {
 
 interface Env {
   TEAM_RELAY: DurableObjectNamespace<TeamRelay>;
+  INVITE_CODES: DurableObjectNamespace<InviteCodeRegistry>;
 }
 
 interface StoredEventRow {
@@ -51,6 +52,23 @@ interface AppendResult {
 }
 
 const encoder = new TextEncoder();
+const MAX_INVITE_CODE_BODY_BYTES = 32 * 1024;
+const INVITE_CODE_LIFETIME_MS = 10 * 60 * 1000;
+const MAX_INVITE_CODE_CLAIMS_PER_WINDOW = 10;
+const INVITE_CODE_ATTEMPT_WINDOW_MS = 10 * 60 * 1000;
+const MAX_ACTIVE_INVITE_CODES = 10_000;
+
+interface InviteCodePayload {
+  team_id: string;
+  invite_code: string;
+}
+
+interface StoredInviteCode {
+  [key: string]: string | number;
+  code: string;
+  invite_code: string;
+  expires_at: number;
+}
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -58,6 +76,18 @@ export default {
     const parts = url.pathname.split("/").filter(Boolean);
     if (parts.length === 1 && parts[0] === "healthz" && request.method === "GET") {
       return json({ status: "ok", protocol_version: 1 });
+    }
+    if (parts.length === 3 && parts[0] === "v1" && parts[1] === "invites") {
+      if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405, { allow: "GET" });
+      const code = parts[2];
+      if (!/^\d{6}$/.test(code)) return json({ error: "invalid_invite_code" }, 400);
+      const clientAddress = request.headers.get("CF-Connecting-IP") ?? "unknown";
+      const clientHash = await sha256Hex(encoder.encode(clientAddress));
+      const registry = env.INVITE_CODES.get(env.INVITE_CODES.idFromName("global-v1"));
+      return registry.fetch(new Request(`https://relay.internal/claim/${code}`, {
+        method: "GET",
+        headers: { "x-client-hash": clientHash },
+      }));
     }
     if (parts.length !== 4 || parts[0] !== "v1" || parts[1] !== "teams") {
       return json({ error: "not_found" }, 404);
@@ -70,7 +100,34 @@ export default {
     const tokenHash = await sha256Hex(encoder.encode(token));
 
     let forwarded: Request;
-    if (parts[3] === "rotate-token") {
+    if (parts[3] === "invite-codes" && request.method === "POST") {
+      const body = await readBoundedBody(request, MAX_INVITE_CODE_BODY_BYTES);
+      if (body === null) return json({ error: "request_too_large" }, 413);
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(new TextDecoder().decode(body));
+      } catch {
+        return json({ error: "malformed_json" }, 400);
+      }
+      const inviteCode = (decoded as { invite_code?: unknown } | null)?.invite_code;
+      if (typeof inviteCode !== "string" || !/^HERDR-INVITE-1:[A-Za-z0-9_-]+$/.test(inviteCode)) {
+        return json({ error: "invalid_invite_payload" }, 400);
+      }
+      if (encoder.encode(inviteCode).byteLength > MAX_INVITE_CODE_BODY_BYTES - 1024) {
+        return json({ error: "invite_payload_too_large" }, 413);
+      }
+      forwarded = new Request("https://relay.internal/v1/invite-codes", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-team-id": teamId,
+          "x-team-token-hash": tokenHash,
+        },
+        body: JSON.stringify({ invite_code: inviteCode }),
+      });
+    } else if (parts[3] === "invite-codes") {
+      return json({ error: "method_not_allowed" }, 405, { allow: "POST" });
+    } else if (parts[3] === "rotate-token") {
       if (request.method !== "POST") return json({ error: "method_not_allowed" }, 405, { allow: "POST" });
       const body = await readBoundedBody(request, 4096);
       if (body === null) return json({ error: "request_too_large" }, 413);
@@ -173,6 +230,33 @@ export class TeamRelay extends DurableObject<Env> {
       return json({ error: "invalid_relay_request" }, 400);
     }
     const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/v1/invite-codes") {
+      const team = this.ctx.storage.sql
+        .exec<StoredTeamRow>("SELECT token_hash FROM relay_team WHERE team_id = ?", teamId)
+        .toArray()[0];
+      if (!team) return json({ error: "team_not_found" }, 404);
+      if (!timingSafeEqualText(team.token_hash, tokenHash)) {
+        return json({ error: "invalid_team_token" }, 401);
+      }
+      const body = await readBoundedBody(request, MAX_INVITE_CODE_BODY_BYTES);
+      if (body === null) return json({ error: "request_too_large" }, 413);
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(new TextDecoder().decode(body));
+      } catch {
+        return json({ error: "malformed_json" }, 400);
+      }
+      const inviteCode = (decoded as { invite_code?: unknown } | null)?.invite_code;
+      if (typeof inviteCode !== "string" || !/^HERDR-INVITE-1:[A-Za-z0-9_-]+$/.test(inviteCode)) {
+        return json({ error: "invalid_invite_payload" }, 400);
+      }
+      const registry = this.env.INVITE_CODES.get(this.env.INVITE_CODES.idFromName("global-v1"));
+      return registry.fetch(new Request("https://relay.internal/create", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ team_id: teamId, invite_code: inviteCode } satisfies InviteCodePayload),
+      }));
+    }
     if (request.method === "POST" && url.pathname === "/v1/events") {
       const body = await readBoundedBody(request, MAX_REQUEST_BYTES);
       if (body === null) return json({ error: "request_too_large" }, 413);
@@ -402,6 +486,158 @@ export class TeamRelay extends DurableObject<Env> {
       .one().present === 1;
     return { status: 200, events, cursor, has_more: hasMore };
   }
+}
+
+export class InviteCodeRegistry extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.blockConcurrencyWhile(async () => {
+      ctx.storage.sql.exec(`
+        CREATE TABLE IF NOT EXISTS invite_codes (
+          code TEXT PRIMARY KEY,
+          team_id TEXT NOT NULL,
+          invite_code TEXT NOT NULL,
+          created_at INTEGER NOT NULL,
+          expires_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS invite_codes_expiry ON invite_codes(expires_at);
+        CREATE TABLE IF NOT EXISTS invite_code_attempts (
+          client_hash TEXT PRIMARY KEY,
+          window_started_at INTEGER NOT NULL,
+          attempts INTEGER NOT NULL
+        );
+      `);
+    });
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    if (request.method === "POST" && url.pathname === "/create") {
+      const body = await readBoundedBody(request, MAX_INVITE_CODE_BODY_BYTES + 1024);
+      if (body === null) return json({ error: "request_too_large" }, 413);
+      let decoded: unknown;
+      try {
+        decoded = JSON.parse(new TextDecoder().decode(body));
+      } catch {
+        return json({ error: "malformed_json" }, 400);
+      }
+      if (decoded === null || typeof decoded !== "object" || Array.isArray(decoded)) {
+        return json({ error: "malformed_invite" }, 400);
+      }
+      const { team_id: teamId, invite_code: inviteCode } = decoded as Partial<InviteCodePayload>;
+      if (
+        typeof teamId !== "string" || !validateTeamId(teamId) ||
+        typeof inviteCode !== "string" || !/^HERDR-INVITE-1:[A-Za-z0-9_-]+$/.test(inviteCode) ||
+        encoder.encode(inviteCode).byteLength > MAX_INVITE_CODE_BODY_BYTES - 1024
+      ) {
+        return json({ error: "invalid_invite_payload" }, 400);
+      }
+      const created = this.createCode(teamId, inviteCode);
+      if (created.status === 201 && await this.ctx.storage.getAlarm() === null) {
+        await this.ctx.storage.setAlarm(Date.now() + INVITE_CODE_LIFETIME_MS);
+      }
+      return json(created.body, created.status);
+    }
+    if (request.method === "GET" && url.pathname.startsWith("/claim/")) {
+      const code = url.pathname.slice("/claim/".length);
+      const clientHash = request.headers.get("x-client-hash");
+      if (!/^\d{6}$/.test(code) || !clientHash || !/^[a-f0-9]{64}$/.test(clientHash)) {
+        return json({ error: "invalid_invite_code" }, 400);
+      }
+      const rateLimit = this.recordClaimAttempt(clientHash);
+      if (!rateLimit.allowed) return json({ error: "too_many_attempts" }, 429);
+      const invite = this.claimCode(code);
+      return invite
+        ? json({ invite_code: invite.invite_code })
+        : json({ error: "invite_code_not_found_or_expired" }, 404);
+    }
+    return json({ error: "not_found" }, 404);
+  }
+
+  async alarm(): Promise<void> {
+    const now = Date.now();
+    this.ctx.storage.sql.exec("DELETE FROM invite_codes WHERE expires_at <= ?", now);
+    this.ctx.storage.sql.exec("DELETE FROM invite_code_attempts WHERE window_started_at + ? <= ?", INVITE_CODE_ATTEMPT_WINDOW_MS, now);
+    const next = this.ctx.storage.sql.exec<{ next_expiry: number | null }>("SELECT MIN(expires_at) AS next_expiry FROM invite_codes").one().next_expiry;
+    if (next !== null) await this.ctx.storage.setAlarm(next);
+  }
+
+  private createCode(teamId: string, inviteCode: string): { status: number; body: Record<string, unknown> } {
+    const now = Date.now();
+    this.ctx.storage.sql.exec("DELETE FROM invite_codes WHERE expires_at <= ?", now);
+    const capacity = this.ctx.storage.sql
+      .exec<{ code_count: number }>("SELECT COUNT(*) AS code_count FROM invite_codes")
+      .one().code_count;
+    if (capacity >= MAX_ACTIVE_INVITE_CODES) {
+      return { status: 503, body: { error: "invite_code_capacity_reached" } };
+    }
+    for (let attempt = 0; attempt < 32; attempt += 1) {
+      const code = generateInviteCode();
+      const existing = this.ctx.storage.sql
+        .exec<{ code: string }>("SELECT code FROM invite_codes WHERE code = ?", code)
+        .toArray()[0];
+      if (existing) continue;
+      const expiresAt = now + INVITE_CODE_LIFETIME_MS;
+      this.ctx.storage.sql.exec(
+        "INSERT INTO invite_codes (code, team_id, invite_code, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+        code,
+        teamId,
+        inviteCode,
+        now,
+        expiresAt,
+      );
+      return { status: 201, body: { code, expires_at: expiresAt } };
+    }
+    return { status: 503, body: { error: "invite_code_generation_failed" } };
+  }
+
+  private recordClaimAttempt(clientHash: string): { allowed: boolean } {
+    const now = Date.now();
+    const current = this.ctx.storage.sql
+      .exec<{ window_started_at: number; attempts: number }>(
+        "SELECT window_started_at, attempts FROM invite_code_attempts WHERE client_hash = ?",
+        clientHash,
+      )
+      .toArray()[0];
+    this.ctx.storage.sql.exec("DELETE FROM invite_code_attempts WHERE window_started_at + ? <= ?", INVITE_CODE_ATTEMPT_WINDOW_MS, now);
+    if (!current || current.window_started_at + INVITE_CODE_ATTEMPT_WINDOW_MS <= now) {
+      this.ctx.storage.sql.exec(
+        "INSERT OR REPLACE INTO invite_code_attempts (client_hash, window_started_at, attempts) VALUES (?, ?, 1)",
+        clientHash,
+        now,
+      );
+      return { allowed: true };
+    }
+    if (current.attempts >= MAX_INVITE_CODE_CLAIMS_PER_WINDOW) return { allowed: false };
+    this.ctx.storage.sql.exec(
+      "UPDATE invite_code_attempts SET attempts = attempts + 1 WHERE client_hash = ?",
+      clientHash,
+    );
+    return { allowed: true };
+  }
+
+  private claimCode(code: string): StoredInviteCode | null {
+    const now = Date.now();
+    const invite = this.ctx.storage.sql
+      .exec<StoredInviteCode>(
+        "SELECT code, invite_code, expires_at FROM invite_codes WHERE code = ?",
+        code,
+      )
+      .toArray()[0];
+    if (!invite) return null;
+    this.ctx.storage.sql.exec("DELETE FROM invite_codes WHERE code = ?", code);
+    if (invite.expires_at <= now) return null;
+    return invite;
+  }
+}
+
+function generateInviteCode(): string {
+  const limit = Math.floor(0x1_0000_0000 / 1_000_000) * 1_000_000;
+  const value = new Uint32Array(1);
+  do {
+    crypto.getRandomValues(value);
+  } while (value[0] >= limit);
+  return String(value[0] % 1_000_000).padStart(6, "0");
 }
 
 function bearerToken(header: string | null): string | null {
