@@ -310,6 +310,66 @@ mod tests {
         s.insert_verified_event(&event(a,"asker",EventType::RequestCreated,json!({"request_id":id,"requester_member_id":"asker","target_member_id":"owner","kind":RequestKind::Check,"payload":json!({"repository_id":repo,"question":"Explain this project"}).to_string(),"created_at":10})),10).unwrap();
     }
     #[test]
+    fn owner_must_confirm_limited_isolation_and_can_decline_without_codex() {
+        let (mut s, owner, asker, repo) = setup();
+        publish(&mut s, &owner, &repo);
+        request(&mut s, &asker, &repo, "needs-consent");
+        s.save_profile(
+            &Member {
+                member_id: "owner".into(),
+                display_name: "Owner".into(),
+                role: Role::Implementer,
+                active: true,
+            },
+            1,
+            1,
+        )
+        .unwrap();
+        let root = s.path().parent().unwrap().to_path_buf();
+        s.save_repository_approval(&RepositoryApproval {
+            repository_id: repo,
+            owner_member_id: "owner".into(),
+            local_path: root.to_string_lossy().into_owned(),
+            approved_at: 1,
+        })
+        .unwrap();
+        let db = s.path().to_path_buf();
+        let identity = root.join("owner.json");
+        let error = crate::cli::questions::decide_and_run(
+            &db,
+            &identity,
+            "team",
+            "needs-consent",
+            crate::cli::questions::QuestionDecision::AllowOnce,
+            false,
+        )
+        .unwrap_err();
+        assert!(error.contains("limited isolation"));
+        assert!(values(&s.connection, "team", EventType::PermissionGranted)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            s.request("needs-consent").unwrap().unwrap().delivery,
+            DeliveryState::Created
+        );
+        crate::cli::questions::decide_and_run(
+            &db,
+            &identity,
+            "team",
+            "needs-consent",
+            crate::cli::questions::QuestionDecision::Deny,
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            s.request("needs-consent").unwrap().unwrap().delivery,
+            DeliveryState::Cancelled
+        );
+        assert!(values(&s.connection, "team", EventType::PermissionGranted)
+            .unwrap()
+            .is_empty());
+    }
+    #[test]
     fn consent_is_request_scoped_signed_and_revocable() {
         let (mut s, o, a, repo) = setup();
         publish(&mut s, &o, &repo);
