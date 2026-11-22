@@ -16,6 +16,10 @@ pub(crate) const TEAM_DB_ENV: &str = "HERDR_TEAM_DB";
 pub(crate) const MAX_DASHBOARD_ROWS: usize = 100;
 
 pub(crate) fn default_database_path() -> PathBuf {
+    crate::team_session::resolve_active_database(&base_database_path())
+}
+
+pub(crate) fn base_database_path() -> PathBuf {
     if let Some(path) = env::var_os(TEAM_DB_ENV).filter(|value| !value.is_empty()) {
         return PathBuf::from(path);
     }

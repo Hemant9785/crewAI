@@ -7,8 +7,12 @@
 //! not log key material or expose the private key to callers.
 
 use base64::{engine::general_purpose::STANDARD, Engine as _};
+use chacha20poly1305::{
+    aead::{Aead, KeyInit, Payload},
+    XChaCha20Poly1305, XNonce,
+};
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use rand_core::OsRng;
+use rand_core::{OsRng, RngCore};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fmt;
@@ -82,6 +86,66 @@ impl From<base64::DecodeError> for IdentityError {
 }
 
 impl DeviceIdentity {
+    /// Encrypt bounded local settings without exposing the signing key.
+    /// On Linux the key file itself still relies on owner-only permissions.
+    pub(crate) fn seal_local(
+        &self,
+        context: &str,
+        plaintext: &[u8],
+    ) -> Result<String, IdentityError> {
+        if plaintext.len() > 128 * 1024 || context.len() > 256 {
+            return Err(IdentityError::InvalidFile("local setting is too large"));
+        }
+        let cipher = self.local_cipher(context);
+        let mut nonce = [0u8; 24];
+        OsRng.fill_bytes(&mut nonce);
+        let ciphertext = cipher
+            .encrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: plaintext,
+                    aad: self.device_id.as_bytes(),
+                },
+            )
+            .map_err(|_| IdentityError::InvalidFile("could not protect local setting"))?;
+        let mut bytes = nonce.to_vec();
+        bytes.extend(ciphertext);
+        Ok(format!("local-v1:{}", STANDARD.encode(bytes)))
+    }
+
+    pub(crate) fn open_local(&self, context: &str, sealed: &str) -> Result<Vec<u8>, IdentityError> {
+        if sealed.len() > 192 * 1024 || context.len() > 256 {
+            return Err(IdentityError::InvalidFile("local setting is too large"));
+        }
+        let encoded = sealed
+            .strip_prefix("local-v1:")
+            .ok_or(IdentityError::InvalidFile(
+                "unsupported local setting format",
+            ))?;
+        let bytes = STANDARD.decode(encoded)?;
+        if bytes.len() < 40 {
+            return Err(IdentityError::InvalidFile("truncated local setting"));
+        }
+        self.local_cipher(context)
+            .decrypt(
+                XNonce::from_slice(&bytes[..24]),
+                Payload {
+                    msg: &bytes[24..],
+                    aad: self.device_id.as_bytes(),
+                },
+            )
+            .map_err(|_| IdentityError::InvalidFile("local setting authentication failed"))
+    }
+
+    fn local_cipher(&self, context: &str) -> XChaCha20Poly1305 {
+        let mut hash = Sha256::new();
+        hash.update(b"team-assistant/local-state-key/v1\0");
+        hash.update(context.as_bytes());
+        hash.update([0]);
+        hash.update(self.signing_key.to_bytes());
+        XChaCha20Poly1305::new(&hash.finalize())
+    }
+
     pub(crate) fn load_or_create(path: impl AsRef<Path>) -> Result<Self, IdentityError> {
         let path = path.as_ref().to_path_buf();
         if path.exists() {
