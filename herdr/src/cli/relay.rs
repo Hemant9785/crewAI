@@ -137,7 +137,7 @@ pub(crate) fn run_relay_command(args: &[String]) -> std::io::Result<i32> {
     let mut database = None;
     let mut team_id = None;
     let mut endpoint = None;
-    let mut token = std::env::var("HERDR_RELAY_TOKEN").ok();
+    let mut token = None;
     let mut i = 1;
     while i < args.len() {
         let flag = args[i].as_str();
@@ -161,11 +161,46 @@ pub(crate) fn run_relay_command(args: &[String]) -> std::io::Result<i32> {
         }
         i += 2;
     }
-    let (Some(database), Some(team_id), Some(endpoint), Some(token)) =
-        (database, team_id, endpoint, token)
-    else {
-        eprintln!("relay: --db, --team, --url, and --token (or HERDR_RELAY_TOKEN) are required");
-        print_help();
+    let database = database.unwrap_or_else(crate::team_view::default_database_path);
+    let team_id = match team_id.or_else(|| {
+        crate::team_view::load_from_path(&database)
+            .ok()?
+            .teams
+            .first()
+            .map(|t| t.team_id.clone())
+    }) {
+        Some(team) => team,
+        None => {
+            eprintln!("relay: create or join a team first, or provide --db and --team");
+            return Ok(2);
+        }
+    };
+    if endpoint.is_none() || token.is_none() {
+        let saved = match crate::team_session::load_connection(&database) {
+            Ok(saved) => saved,
+            Err(error) => {
+                eprintln!("relay: {error}");
+                return Ok(2);
+            }
+        };
+        if let Some(saved) = saved {
+            if token.is_none()
+                && endpoint.as_ref().is_some_and(|url| {
+                    url.trim_end_matches('/') != saved.endpoint.trim_end_matches('/')
+                })
+            {
+                eprintln!("relay: a different --url requires an explicit --token");
+                return Ok(2);
+            }
+            endpoint = endpoint.or(Some(saved.endpoint));
+            token = token.or(Some(saved.token));
+        } else {
+            endpoint = endpoint.or_else(|| std::env::var("HERDR_RELAY_URL").ok());
+            token = token.or_else(|| std::env::var("HERDR_RELAY_TOKEN").ok());
+        }
+    }
+    let (Some(endpoint), Some(token)) = (endpoint, token) else {
+        eprintln!("relay: reconnect using an invite code, or provide --url and --token");
         return Ok(2);
     };
     if token.len() != 43
@@ -221,6 +256,7 @@ pub(super) fn sync_team(
     let endpoint = validate_endpoint(endpoint).map_err(str::to_owned)?;
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(Duration::from_secs(15)))
+        .http_status_as_error(false)
         .build()
         .new_agent();
     let identity = DeviceIdentity::load_existing(crate::cli::join_inbox::identity_path(database))
@@ -333,12 +369,15 @@ fn post_upload(
             .send(body.as_slice())
         {
             Ok(response) => {
+                if !response.status().is_success() {
+                    return Err(relay_rejection(response, "upload"));
+                }
                 return response
                     .into_body()
                     .with_config()
                     .limit(64 * 1024)
                     .read_json::<UploadResponse>()
-                    .map_err(|_| "relay returned an invalid upload response".to_string())
+                    .map_err(|_| "relay returned an invalid upload response".to_string());
             }
             Err(ureq::Error::StatusCode(code)) => {
                 return Err(format!("relay rejected upload with HTTP {code}"))
@@ -374,7 +413,12 @@ fn get_page(
             .header("x-relay-signature", &signature)
             .call()
         {
-            Ok(response) => return Ok(response),
+            Ok(response) => {
+                if !response.status().is_success() {
+                    return Err(relay_rejection(response, "download"));
+                }
+                return Ok(response);
+            }
             Err(ureq::Error::StatusCode(code)) => {
                 return Err(format!("relay rejected download with HTTP {code}"))
             }
@@ -395,15 +439,41 @@ pub(super) fn auto_sync_after_write(
     database: &std::path::Path,
     team_id: &str,
 ) -> Result<bool, String> {
-    let (Ok(endpoint), Ok(token)) = (
-        std::env::var("HERDR_RELAY_URL"),
-        std::env::var("HERDR_RELAY_TOKEN"),
-    ) else {
+    let Some(connection) = crate::team_session::connection_from_env_or_store(database)? else {
         return Ok(false);
     };
-    let endpoint = validate_endpoint(&endpoint).map_err(str::to_owned)?;
-    sync_team(database, team_id, &endpoint, &token)?;
+    sync_team(database, team_id, &connection.endpoint, &connection.token)?;
     Ok(true)
+}
+
+fn relay_rejection(response: ureq::http::Response<ureq::Body>, operation: &str) -> String {
+    let status = response.status().as_u16();
+    let code = response
+        .into_body()
+        .with_config()
+        .limit(4096)
+        .read_json::<serde_json::Value>()
+        .ok()
+        .and_then(|v| v.get("error").and_then(|s| s.as_str()).map(str::to_owned));
+    rejection_message(status, operation, code.as_deref())
+}
+fn rejection_message(status: u16, operation: &str, code: Option<&str>) -> String {
+    let hint = match code {
+        Some("invalid_team_token" | "authorization_required") => {
+            "The connection does not match this team. Reconnect with a fresh manager invite."
+        }
+        Some("invalid_signature" | "device_identity_mismatch" | "invalid_access_signature") => {
+            "The signed device or event could not be verified."
+        }
+        Some("device_not_approved" | "event_device_not_approved") => {
+            "Waiting for the manager to approve this device and sync membership."
+        }
+        Some("access_replay" | "stale_access_proof") => {
+            "Retry sync and check that this computer's clock is correct."
+        }
+        _ => "Check your connection and retry sync.",
+    };
+    format!("relay rejected {operation} with HTTP {status}. {hint}")
 }
 
 fn access_proof(
@@ -474,5 +544,25 @@ fn now() -> u64 {
 }
 
 fn print_help() {
-    println!("usage: herdr relay sync --db PATH --team TEAM_ID --url HTTPS_URL --token TOKEN\n       herdr relay sync --db PATH --team TEAM_ID --url HTTPS_URL (uses HERDR_RELAY_TOKEN)\n\nSynchronizes bounded signed team events. Repository files and paths are never sent. The token is not stored locally.");
+    println!("usage: herdr relay sync [--db PATH] [--team TEAM_ID] [--url HTTPS_URL --token TOKEN]\n\nUses the active team's protected saved connection; environment settings bootstrap unsaved connections. Explicit URL/token flags override it. Synchronizes bounded signed team records.");
+}
+
+#[cfg(test)]
+mod connection_error_tests {
+    use super::*;
+    #[test]
+    fn token_signature_and_approval_errors_have_distinct_safe_guidance() {
+        assert!(rejection_message(401, "upload", Some("invalid_team_token"))
+            .contains("fresh manager invite"));
+        assert!(rejection_message(401, "upload", Some("invalid_signature"))
+            .contains("could not be verified"));
+        assert!(
+            rejection_message(403, "download", Some("device_not_approved"))
+                .contains("approve this device")
+        );
+        assert!(
+            !rejection_message(401, "upload", Some("untrusted-secret-response"))
+                .contains("untrusted-secret-response")
+        );
+    }
 }

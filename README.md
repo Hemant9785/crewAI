@@ -150,7 +150,7 @@ it in progress, `d` to complete, `x` to cancel, and `!` to flag it for
 attention. Right-click an agent pane and choose **Link team task** to show its
 task in Agents; this pane-to-task link is local to the current Herdr session.
 
-Choose **Create** or **Join** from Team home and enter your name when prompted. Team creation configures the Internet relay automatically. Connections are saved in authenticated encrypted local sidecars and restored on restart. Keep your local identity and database files together. On Linux the encryption key depends on an owner-only, unencrypted identity file; protect your OS account and backups.
+Choose **Create** or **Join** from Team home and enter your name when prompted. Team creation configures the Internet relay automatically. Connections are saved in authenticated encrypted local sidecars and restored on restart. A saved team connection takes precedence over old global `HERDR_RELAY_URL`/`HERDR_RELAY_TOKEN` settings, which are used only to bootstrap unsaved connections. Keep your local identity and database files together. On Linux the encryption key depends on an owner-only, unencrypted identity file; protect your OS account and backups.
 
 For a first teammate: press `i`, then `y` to share the six-digit invite privately.
 The six digits stay visible in the dashboard header. In an EC2/browser terminal, clipboard forwarding may not update your computer clipboard; type the visible digits manually if paste shows old content. A copy request is not a confirmation from the browser.
@@ -217,7 +217,7 @@ setup, invitation, and command examples.
 
 Press `/`, choose **This computer** or an approved teammate, then write your question. The project owner connects their folder with `o`. An EC2 manager can coordinate tasks/messages and ask the Windows implementer's project without installing Codex on EC2.
 
-Remote questions appear in **4 Requests**. Use `[` / `]` to select a question and Enter to review it. The owner can allow once, allow the project, or deny. Execution requires a separate explicit limited-isolation choice; use Up/Down to read the warning. A completed answer is saved under Requests; Enter opens the scrollable result. Codex CLI must be installed and signed in on the computer answering the question. An existing Codex conversation alone is insufficient.
+Remote questions appear in **4 Requests**. When no join requests are pending, use Up/Down to select a question and Enter to review it, or click the question. `[` / `]` also selects questions when the join inbox has entries. The owner can allow once, allow the project, or deny. Execution requires a separate explicit limited-isolation choice; use Up/Down to read the warning. A completed answer is saved under Requests; Enter opens the scrollable result. Codex CLI must be installed and signed in on the computer answering the question. An existing Codex conversation alone is insufficient.
 
 In **Tasks**, Enter opens history and `f` adds a follow-up. In **Messages**, Enter reads the full message. Drafts survive cancellation. Saved/queued feedback means the event is waiting for synchronization, not proof that an offline person has seen it.
 
@@ -267,3 +267,5 @@ Object. The Internet setup and command walkthrough is in
 - On the current Windows build, repository checks require explicit
   `--confirm-unisolated` because an OS-level read-only sandbox is not yet
   available. Do not treat a separate child process as a filesystem sandbox.
+
+For connection diagnostics, `herdr relay sync` uses the active saved team without copying tokens. An HTTP 401 connection mismatch now has a different explanation from a signature or device-approval failure.

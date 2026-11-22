@@ -720,6 +720,11 @@ impl ClientShellState {
                         if let Some(form) = d.form.as_mut() {
                             form.member_cursor = *index;
                             code = Some(KeyCode::Enter);
+                        } else if d.section == ClientTeamDashboardSection::Requests
+                            && d.guided.questions.get(*index).is_some()
+                        {
+                            d.guided.question_cursor = *index;
+                            code = Some(KeyCode::Enter);
                         }
                     }
                 }

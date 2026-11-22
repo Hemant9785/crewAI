@@ -73,6 +73,20 @@ impl ClientShellState {
             return false;
         }
         let action = match key.code {
+            KeyCode::Up | KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('k')
+                if d.section == ClientTeamDashboardSection::Requests
+                    && d.join_inbox.entries.is_empty()
+                    && !d.guided.questions.is_empty() =>
+            {
+                d.guided.question_cursor = if matches!(key.code, KeyCode::Down | KeyCode::Char('j'))
+                {
+                    (d.guided.question_cursor + 1).min(d.guided.questions.len().saturating_sub(1))
+                } else {
+                    d.guided.question_cursor.saturating_sub(1)
+                };
+                outcome.repaint = true;
+                return true;
+            }
             KeyCode::Char('[') | KeyCode::Char(']')
                 if d.section == ClientTeamDashboardSection::Requests =>
             {

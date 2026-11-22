@@ -585,6 +585,7 @@ fn render_team_dashboard_overlay(
                     .skip(question_start)
                     .take(question_capacity)
                 {
+                    pick_lines.push((lines.len(), index));
                     lines.push(format!(
                         "{} {} | {} | {} | {}",
                         if index == dashboard.guided.question_cursor {
@@ -610,6 +611,11 @@ fn render_team_dashboard_overlay(
                 footer = " Up/Down Select join  a Approve join  x Reject join".into();
                 secondary =
                     " [ / ] Select question  Enter Review question or answer  Esc Close".into();
+                if dashboard.join_inbox.entries.is_empty() && !dashboard.guided.questions.is_empty()
+                {
+                    footer = " Up/Down Choose question  Enter Review question or answer".into();
+                    secondary = " Click a question to review it  1-5 Views  Esc Close".into();
+                }
             }
             ClientTeamDashboardSection::Access => {
                 lines.push("Project access is controlled by the project owner.".into());

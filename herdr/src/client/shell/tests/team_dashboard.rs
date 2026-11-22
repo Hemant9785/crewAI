@@ -505,3 +505,55 @@ fn dashboard_mouse_copy_and_close_use_keyboard_action_handler() {
     state.handle_raw_events(vec![click(3)]);
     assert!(state.overlay.is_none());
 }
+
+#[test]
+fn questions_use_arrow_selection_and_mouse_review_without_changing_sections() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    let ClientShellOverlay::TeamDashboard(mut d) = dashboard_without_database() else {
+        unreachable!()
+    };
+    d.section = ClientTeamDashboardSection::Requests;
+    d.guided.questions = (0..2)
+        .map(|n| crate::cli::questions::Question {
+            request_id: format!("q{n}"),
+            requester_member_id: "manager".into(),
+            target_member_id: "owner".into(),
+            repository_id: "project".into(),
+            question: format!("Question {n}"),
+            delivery: "Completed".into(),
+            result: Some(format!("Answer {n}")),
+            consent: "Completed".into(),
+        })
+        .collect();
+    state.overlay = Some(ClientShellOverlay::TeamDashboard(d));
+    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Down,
+        KeyModifiers::empty(),
+    ))]);
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard")
+    };
+    assert_eq!(d.section, ClientTeamDashboardSection::Requests);
+    assert_eq!(d.guided.question_cursor, 1);
+    state.handle_raw_events(vec![RawInputEvent::Key(crate::input::TerminalKey::new(
+        KeyCode::Enter,
+        KeyModifiers::empty(),
+    ))]);
+    let Some(ClientShellOverlay::TeamDashboard(d)) = state.overlay.as_mut() else {
+        panic!("dashboard")
+    };
+    assert_eq!(d.guided.details.as_ref().unwrap().1, "Answer 1");
+    d.guided.details = None;
+    state.hits.team_pick_rows = vec![(Rect::new(2, 4, 12, 1), 0)];
+    state.handle_raw_events(vec![RawInputEvent::Mouse(crossterm::event::MouseEvent {
+        kind: MouseEventKind::Down(MouseButton::Left),
+        column: 3,
+        row: 4,
+        modifiers: KeyModifiers::empty(),
+    })]);
+    let Some(ClientShellOverlay::TeamDashboard(d)) = &state.overlay else {
+        panic!("dashboard")
+    };
+    assert_eq!(d.guided.question_cursor, 0);
+    assert_eq!(d.guided.details.as_ref().unwrap().1, "Answer 0");
+}

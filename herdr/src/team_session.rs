@@ -153,8 +153,13 @@ fn connection_override(
     endpoint: Option<String>,
     token: Option<String>,
 ) -> Result<Option<RelayConnection>, String> {
+    // A remembered connection is scoped to this exact team database. Global
+    // variables may belong to an older team or shell and must not replace it.
+    if let Some(connection) = load_connection(db)? {
+        return Ok(Some(connection));
+    }
     match (endpoint, token) {
-        (None, None) => load_connection(db),
+        (None, None) => Ok(None),
         (Some(endpoint), Some(token)) => {
             validate_connection(&endpoint, &token)?;
             Ok(Some(RelayConnection { endpoint, token }))
@@ -490,7 +495,13 @@ mod tests {
             .repository_approvals()
             .unwrap()
             .is_empty());
-        assert!(connection_override(&db, Some("https://example.com".into()), None).is_err());
+        assert_eq!(
+            connection_override(&db, Some("https://example.com".into()), None)
+                .unwrap()
+                .unwrap()
+                .token,
+            "private-token"
+        );
         assert_eq!(
             connection_override(
                 &db,
@@ -500,7 +511,7 @@ mod tests {
             .unwrap()
             .unwrap()
             .token,
-            "override"
+            "private-token"
         );
         assert_eq!(
             load_connection(&db).unwrap().unwrap().token,
@@ -524,6 +535,41 @@ mod tests {
             .open_local("connection", std::str::from_utf8(&damaged).unwrap())
             .is_err());
         assert!(a.open_local("connection", "local-v1:AA==").is_err());
+    }
+    #[test]
+    fn legacy_environment_only_bootstraps_when_no_team_connection_is_saved() {
+        let root = Sandbox::new();
+        let db = root.db();
+        setup_profile(&db, "Teammate", Role::Implementer).unwrap();
+        assert!(connection_override(&db, Some("https://old.example.com".into()), None).is_err());
+        assert_eq!(
+            connection_override(
+                &db,
+                Some("https://old.example.com".into()),
+                Some("old-token".into())
+            )
+            .unwrap()
+            .unwrap()
+            .token,
+            "old-token"
+        );
+        save_connection(&db, "https://current.example.com", "current-token").unwrap();
+        let selected = connection_override(
+            &db,
+            Some("https://old.example.com".into()),
+            Some("old-token".into()),
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(selected.endpoint, "https://current.example.com");
+        assert_eq!(selected.token, "current-token");
+        fs::write(db.with_extension("connection.json"), "damaged").unwrap();
+        assert!(connection_override(
+            &db,
+            Some("https://old.example.com".into()),
+            Some("old-token".into())
+        )
+        .is_err());
     }
 
     #[test]
