@@ -5,6 +5,7 @@
 //! this module.
 
 mod task_events;
+mod membership_events;
 
 use crate::identity::DeviceIdentity;
 use crate::team::{
@@ -918,7 +919,7 @@ impl TeamStore {
         created_at: u64,
         verify_signature: bool,
     ) -> Result<bool, StorageError> {
-        if verify_signature {
+        if verify_signature || matches!(event.event_type, EventType::MemberAdded | EventType::DeviceAdded) {
             self.validate_verified_event(event)?;
         } else {
             if event
@@ -1712,6 +1713,7 @@ fn project_event(
     event: &Event,
     received_at: u64,
 ) -> Result<(), StorageError> {
+    if membership_events::apply(transaction, event, received_at)? { return Ok(()); }
     match event.event_type {
         EventType::TaskCreated => {
             let payload: TaskCreatedPayload = serde_json::from_value(event.payload.clone())?;

@@ -237,6 +237,15 @@ export class TeamRelay extends DurableObject<Env> {
   }
 
   async fetch(request: Request): Promise<Response> {
+    // Signature verification is asynchronous. Serialize event access with registry
+    // refresh and append so a concurrent revocation cannot race an approved read.
+    if (new URL(request.url).pathname === "/v1/events") {
+      return this.ctx.blockConcurrencyWhile(() => this.handleRequest(request));
+    }
+    return this.handleRequest(request);
+  }
+
+  private async handleRequest(request: Request): Promise<Response> {
     const teamId = request.headers.get("x-team-id");
     const tokenHash = request.headers.get("x-team-token-hash");
     if (!teamId || !validateTeamId(teamId) || !tokenHash || !/^[a-f0-9]{64}$/.test(tokenHash)) {

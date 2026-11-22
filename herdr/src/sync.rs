@@ -148,9 +148,8 @@ pub(crate) fn apply_remote_events(
             .cmp(&right.logical_time)
             .then_with(|| left.event_id.cmp(&right.event_id))
     });
-    for event in &pending {
-        store.validate_verified_event(event)?;
-    }
+    // Each insertion verifies its signature before mutation. Membership events
+    // in this batch can establish the key needed to verify a later participant.
 
     let mut report = SyncApplyReport::default();
     let mut deferred = Vec::new();
@@ -170,10 +169,16 @@ pub(crate) fn apply_remote_events(
                 Err(StorageError::Sql(rusqlite::Error::QueryReturnedNoRows)) => {
                     deferred.push(event);
                 }
+                Err(StorageError::UnauthorizedEvent { .. }) => {
+                    deferred.push(event);
+                }
                 Err(error) => return Err(SyncError::Storage(error)),
             }
         }
         if !deferred.is_empty() && !progressed {
+            // Preserve the authorization failure once membership dependencies
+            // can no longer progress; unknown devices never become trusted here.
+            store.validate_verified_event(&deferred[0])?;
             return Err(SyncError::DependencyMissing(deferred[0].event_id.clone()));
         }
         pending = deferred.clone();
@@ -421,6 +426,38 @@ mod tests {
         ] {
             let _ = fs::remove_file(path);
         }
+    }
+
+    #[test]
+    fn authority_membership_hydrates_unknown_device_before_its_signed_messages() {
+        let owner_path = path("hydrate-owner", "json");
+        let peer_path = path("hydrate-peer", "json");
+        let database = path("hydrate", "sqlite");
+        let owner = DeviceIdentity::load_or_create(&owner_path).unwrap();
+        let peer = DeviceIdentity::load_or_create(&peer_path).unwrap();
+        let mut store = seed_store(&database, &owner, "member-1");
+        store.save_member("team-1", &Member { member_id: "member-2".into(), display_name: "Peer".into(), role: Role::Implementer, active: false }, 1).unwrap();
+        let added = signed_event(&owner,"hydrate-member",EventType::MemberAdded,json!({"member_id":"member-2","display_name":"Peer","role":"Implementer","active":true}),3);
+        let device = signed_event(&owner,"hydrate-device",EventType::DeviceAdded,json!({"member_id":"member-2","device_id":peer.device_id(),"public_key":peer.public_key(),"active":true}),2);
+        let mut message = signed_event(&peer,"hydrate-message",EventType::BroadcastCreated,json!({"message_id":"hydrate-message","sender_member_id":"member-2","scope":"team","message":"hello from approved peer","created_at":1}),1);
+        message.actor_member_id="member-2".into();
+        message.signature=Some(peer.sign(&message.signing_bytes()));
+        let report=apply_remote_events(&mut store,"team-1",&SyncMessage::Events{team_id:"team-1".into(),events:vec![message,device.clone(),added.clone()]},4).unwrap();
+        assert_eq!(report.inserted,3);
+        assert_eq!(store.broadcast_count().unwrap(),1);
+        let mut forged=signed_event(&peer,"hydrate-forged",EventType::MemberAdded,json!({"member_id":"intruder","display_name":"Intruder","role":"Manager","active":true}),5);
+        forged.actor_member_id="member-2".into();forged.signature=Some(peer.sign(&forged.signing_bytes()));
+        assert!(store.insert_verified_event(&forged,5).is_err());
+        let revoke=signed_event(&owner,"hydrate-revoke",EventType::DeviceAdded,json!({"member_id":"member-2","device_id":peer.device_id(),"public_key":peer.public_key(),"active":false}),6);
+        store.insert_verified_event(&revoke,6).unwrap();
+        let stale=signed_event(&owner,"hydrate-stale",EventType::DeviceAdded,device.payload,4);
+        store.insert_verified_event(&stale,7).unwrap();
+        assert!(store.device_public_key(peer.device_id()).unwrap().is_none());
+        let mut invalid_key=signed_event(&owner,"hydrate-key-mismatch",EventType::DeviceAdded,json!({"member_id":"member-2","device_id":peer.device_id(),"public_key":owner.public_key(),"active":true}),8);
+        invalid_key.signature=Some(owner.sign(&invalid_key.signing_bytes()));
+        assert!(store.insert_verified_event(&invalid_key,8).is_err());
+        drop(store);
+        for value in [owner_path,peer_path,database] {let _=fs::remove_file(value);}
     }
 
     #[test]
