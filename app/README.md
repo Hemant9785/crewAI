@@ -13,6 +13,19 @@ node dist/cli.js --demo
 
 Choose "Join a team" and enter the code it prints. Hemant, Shwetank and Priya are simulated; Ravi is away.
 
+## Install as a command
+
+```powershell
+cd app
+npm install
+npm run build
+npm pack
+npm install -g .\crewai-0.1.0.tgz
+crewai --version
+```
+
+Then run `crewai` in any project folder. (Publishing to npm is not set up; the package is marked private.)
+
 ## Commands in the chat
 
 | Input | What it does |

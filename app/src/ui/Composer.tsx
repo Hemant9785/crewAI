@@ -12,12 +12,14 @@ export interface ComposerProps {
   onSubmit: (text: string) => void;
   onEmptyChange?: (empty: boolean) => void;
   placeholder?: string;
+  /** Put text back in the box (a message that was not sent). Ignored if the user already started typing. */
+  restore?: { text: string; n: number };
 }
 
 const STRICT_NO_ARGS = ['tasks', 'new', 'help', 'quit'];
 const OPTIONAL_ARGS = ['team', 'agent'];
 
-export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange, placeholder }: ComposerProps) {
+export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange, placeholder, restore }: ComposerProps) {
   const [value, setValue] = useState('');
   const [cursor, setCursor] = useState(0);
   const [sel, setSel] = useState(0);
@@ -43,6 +45,13 @@ export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange
     setCursor(c);
     setSel(0);
   };
+
+  const restored = useRef(0);
+  useEffect(() => {
+    if (!restore || restore.n === restored.current) return;
+    restored.current = restore.n;
+    if (value === '') set(restore.text);
+  }, [restore]);
 
   useInput((input, key) => {
     if (key.return) {

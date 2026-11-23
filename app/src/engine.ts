@@ -47,7 +47,8 @@ export interface EngineState {
   error: string;
 }
 
-export type Outcome = { action?: 'quit' | 'new' | 'tasks' };
+/** `keepDraft` tells the UI to put the text back in the message box because nothing was sent. */
+export type Outcome = { action?: 'quit' | 'new' | 'tasks'; keepDraft?: boolean };
 
 export interface EngineDeps {
   backend: Backend;
@@ -439,7 +440,7 @@ export class Engine {
           return {};
         case 'error':
           this.sys(p.message);
-          return {};
+          return { keepDraft: true };
         case 'quit':
           return { action: 'quit' };
         case 'new':
@@ -450,22 +451,15 @@ export class Engine {
           this.sys(COMMANDS.map((c) => `${c.usage.padEnd(30)} ${c.desc}`).join('\n') + '\nPlain text asks your own agent about this folder.');
           return {};
         case 'ask':
-          await this.askLocal(p.text);
-          return {};
+          return { keepDraft: !(await this.askLocal(p.text)) };
         case 'read': {
-          if (!p.target) {
-            await this.askLocal(p.question, `/read ${p.question}`);
-            return {};
-          }
+          if (!p.target) return { keepDraft: !(await this.askLocal(p.question, `/read ${p.question}`)) };
           const r = resolveMention(p.target, this.s.members);
           if ('error' in r) {
             this.sys(r.error);
-            return {};
+            return { keepDraft: true };
           }
-          if (r.member.uid === this.s.me.uid) {
-            await this.askLocal(p.question, `/read ${p.question}`);
-            return {};
-          }
+          if (r.member.uid === this.s.me.uid) return { keepDraft: !(await this.askLocal(p.question, `/read ${p.question}`)) };
           this.log('you', 'you', `/read @${r.member.name} ${p.question}`, `u:${this.now()}:${++this.counter}`);
           await this.d.backend.createRequest(team.id, { targetUid: r.member.uid, targetName: r.member.name, question: p.question });
           return {};
@@ -476,7 +470,7 @@ export class Engine {
             const r = resolveMention(name, this.s.members);
             if ('error' in r) {
               this.sys(r.error);
-              return {};
+              return { keepDraft: true };
             }
             people.push(r.member);
           }
@@ -495,23 +489,26 @@ export class Engine {
       }
     } catch (e) {
       this.sys(e instanceof BackendError ? e.message : 'Something went wrong. Try again.');
+      return { keepDraft: true };
     }
     return {};
   }
 
-  private async askLocal(question: string, echo = question): Promise<void> {
+  /** Returns true when an answer was shown. */
+  private async askLocal(question: string, echo = question): Promise<boolean> {
     this.log('you', 'you', echo, `u:${this.now()}:${++this.counter}`);
     await this.refreshAgents();
     const agent = this.s.agent;
     if (!agent) {
       this.sys('No coding agent found on this laptop. Install Codex or Claude Code, then try again.');
-      return;
+      return false;
     }
     this.emit({ busy: `Asking ${agent} about ${basename(this.d.folder)}…` });
     try {
       const res = await this.d.runner.run(agent, question, this.d.folder);
       if (res.ok) this.log('agent', `your ${agent}`, res.text, `la:${this.now()}:${++this.counter}`, this.now(), `answered from ${basename(this.d.folder)} on this laptop`);
       else this.sys(res.text);
+      return res.ok;
     } finally {
       this.emit({ busy: '' });
     }

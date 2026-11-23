@@ -22,6 +22,11 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 - `npx tsc --noEmit` clean. `npm test`: 52 tests pass. `npm run emulators`: 12 contract tests pass against the real rules. `npm run build` OK.
 - Manual: `node dist/cli.js --demo` on a real Windows terminal reached the onboarding screen; later screens were checked through rendered test frames only.
 
+**Follow-up (same day)**
+- Real Codex answered one question through the runner (about 22 s, `codex exec --sandbox read-only`). Claude is not installed on this machine, so its command is untested.
+- Unsent messages (unknown teammate, no agent, failed send) are put back in the message box. 54 tests pass.
+- The packed tarball installs into a clean folder and `crewai --version` / `--help` run. Windows now spawns agents without Node's shell-args warning.
+
 **Known limitations**
 - Not tested: a real Firebase project (needs the owner's project and web config), real Codex/Claude answers through the full flow, macOS and Linux, long pasted text.
 - Not built: Google/Microsoft sign-in, admin controls, audit log, the team permission graph.

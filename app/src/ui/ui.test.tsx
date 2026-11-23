@@ -117,6 +117,20 @@ describe('onboarding and chat', () => {
   });
 });
 
+describe('drafts', () => {
+  it('puts a message back in the box when the teammate cannot be found', async () => {
+    const cloud = new MemoryStore();
+    const boss = cloud.backendFor('u-boss');
+    const team = await boss.createTeam('Acme', 'Boss');
+    const m = await mount(cloud, 'u-boss', { settings: { displayName: 'Boss', team } });
+    await m.waitFor('Ask your agent, or type / for commands');
+    await m.type('/task @zed fix the nav bar');
+    await m.type(KEY.enter);
+    await m.waitFor('Nobody called zed');
+    await vi.waitFor(() => expect(m.ui.lastFrame()).toContain('/task @zed fix the nav bar'));
+  });
+});
+
 describe('questions between people', () => {
   it('shows the owner an approval card; Enter on the empty box allows it and the asker gets the answer', async () => {
     const cloud = new MemoryStore();

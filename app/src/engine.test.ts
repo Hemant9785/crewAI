@@ -66,8 +66,17 @@ describe('local questions', () => {
   it('says so when no coding agent is installed', async () => {
     const w = await world();
     const a = await w.person('Ann', { agents: [] });
-    await a.engine.submit('hello');
+    const out = await a.engine.submit('hello');
     expect(texts(a.engine).some((t) => t.includes('No coding agent found'))).toBe(true);
+    expect(out.keepDraft).toBe(true);
+  });
+  it('hands the text back when nothing was sent', async () => {
+    const w = world();
+    const a = await w.person('Ann');
+    expect((await a.engine.submit('/task @zed do it')).keepDraft).toBe(true);
+    expect((await a.engine.submit('/read')).keepDraft).toBe(true);
+    expect((await a.engine.submit('/broadcast hi all')).keepDraft).toBeFalsy();
+    expect((await a.engine.submit('fine question')).keepDraft).toBe(false);
   });
 });
 

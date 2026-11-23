@@ -20,6 +20,7 @@ export function Chat({ engine, folder, onQuit, onNew }: { engine: Engine; folder
   const [taskSel, setTaskSel] = useState(0);
   const [composerEmpty, setComposerEmpty] = useState(true);
   const [sel, setSel] = useState(0);
+  const [restore, setRestore] = useState<{ text: string; n: number } | undefined>();
 
   useEffect(() => {
     const fresh = s.entries.filter((e) => !seen.current.has(e.id));
@@ -80,6 +81,7 @@ export function Chat({ engine, folder, onQuit, onNew }: { engine: Engine; folder
     async (text: string) => {
       setHistory((h) => [...h, text]);
       const out = await engine.submit(text);
+      if (out.keepDraft) setRestore((r) => ({ text, n: (r?.n ?? 0) + 1 }));
       if (out.action === 'quit') onQuit();
       else if (out.action === 'new') onNew();
       else if (out.action === 'tasks') {
@@ -132,6 +134,7 @@ export function Chat({ engine, folder, onQuit, onNew }: { engine: Engine; folder
           now={s.now}
           onSubmit={(t) => void submit(t)}
           onEmptyChange={setComposerEmpty}
+          restore={restore}
           placeholder="Ask your agent, or type / for commands"
         />
       )}

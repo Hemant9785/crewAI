@@ -50,7 +50,12 @@ export function pickAgent(pref: AgentPref, available: AgentName[]): { agent: Age
 function exec(cmd: string, args: string[], input: string | null, cwd: string, timeoutMs: number, signal?: AbortSignal) {
   return new Promise<{ code: number | null; stdout: string; stderr: string; timedOut: boolean }>((resolve) => {
     // shell is needed on Windows for .cmd shims. All args are fixed strings, never user text.
-    const child = spawn(cmd, args, { cwd, shell: process.platform === 'win32', windowsHide: true });
+    // A single quoted command line avoids Node's warning about args with shell:true.
+    const quote = (a: string) => (/^[\w./:\\=,-]+$/.test(a) ? a : `"${a.replace(/"/g, '')}"`);
+    const child =
+      process.platform === 'win32'
+        ? spawn([cmd, ...args].map(quote).join(' '), [], { cwd, shell: true, windowsHide: true })
+        : spawn(cmd, args, { cwd, windowsHide: true });
     let stdout = '';
     let stderr = '';
     let timedOut = false;
