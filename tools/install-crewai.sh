@@ -44,15 +44,21 @@ if [ -z "$base" ]; then
   if [ -z "$tag" ]; then
     say "Looking up the latest crewai release..."
     # Newest crewai-v* release that is neither a draft nor a pre-release (same rule as install-crewai.ps1).
-    # The API prints one field per line, with tag_name before draft and prerelease in each release.
+    # The API may send the JSON on one line or pretty-printed, so split it into one field per line
+    # first. In each release, tag_name comes before draft and prerelease (in either order).
     tag=$(curl -fsSL -H "User-Agent: crewai-installer" "https://api.github.com/repos/$REPO/releases?per_page=30" |
+      tr ',{}' '\n\n\n' |
       awk '
-        /"tag_name":/ { t = $0; sub(/.*"tag_name": *"/, "", t); sub(/".*/, "", t); d = ""; p = "" }
-        /"draft":/ { d = ($0 ~ /true/) ? "true" : "false" }
-        /"prerelease":/ {
-          p = ($0 ~ /true/) ? "true" : "false"
-          if (t ~ /^crewai-v/ && d == "false" && p == "false") { print t; exit }
-        }') || true
+        function check() {
+          if (t != "" && d != "" && p != "") {
+            if (t ~ /^crewai-v/ && d == "false" && p == "false") { print t; exit }
+            t = ""
+          }
+        }
+        /"tag_name" *:/ { t = $0; sub(/.*"tag_name" *: *"/, "", t); sub(/".*/, "", t); d = ""; p = "" }
+        /"draft" *:/ { d = ($0 ~ /true/) ? "true" : "false"; check() }
+        /"prerelease" *:/ { p = ($0 ~ /true/) ? "true" : "false"; check() }
+      ') || true
     [ -n "$tag" ] || fail "no crewai release was found at https://github.com/$REPO/releases yet."
   fi
   base="https://github.com/$REPO/releases/download/$tag"
