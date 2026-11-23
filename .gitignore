@@ -1,28 +1,19 @@
-# Repository-local build and dependency caches
+# Local caches, tools and worktrees
 .cache/
+.tools/
 .worktrees/
+
+# Local runtime state and credentials
 *.connection.json
 *.active.json
 *.draft.json
-.tools/
-herdr/target/
-herdr/vendor/libghostty-vt/zig-pkg/
-relay/node_modules/
-relay/.wrangler/
-relay/.dev.vars
-
-# Local runtime state and credentials
+*.identity.json
 *.sqlite
 *.sqlite3
 *.db
-*.identity.json
 *.log
-herdr/.local/
 
 # Temporary files
 *.tmp
 *.temp
 *.pdb
-
-# Local backup of the imported Herdr repository metadata
-herdr/.nested-git-backup/

@@ -1,9 +1,9 @@
 # crewAI tasks (standalone app)
 
-Ordered by dependency. Decisions and assumptions: [conversation_context.md](conversation_context.md). The older `task.md` belongs to the Herdr-based prototype and is kept unchanged.
+Ordered by dependency. Decisions and assumptions: [conversation_context.md](conversation_context.md). The earlier Herdr-based prototype and its planning documents were removed on 2026-11-23 (see task 13); they remain in git history.
 
 - [x] **1. Inspect and preserve context.** Inspected folder, instructions and references; saved decisions, reference images and this checklist.
-- [x] **2. Review and preserve Herdr work.** Legacy `herdr/`, `relay/` and docs stay untouched; new app lives in `app/`; short legacy note added to the README.
+- [x] **2. Review and preserve Herdr work.** Legacy `herdr/`, `relay/` and docs were kept at the time and removed in task 13; the new app lives in `app/`.
 - [x] **3. Scaffold app and core.** TypeScript + Ink + vitest project in `app/`; domain models, command parser, `Backend` interface with in-memory implementation, local config/history store, agent detection and runner for Codex and Claude.
 - [x] **4. Firebase setup.** Firebase backend (device account auth, presence heartbeat, invites, tasks, messages, requests), Firestore rules and indexes, `firebase.json` with emulators, `.env` template and `--check`.
 - [x] **5. Main application flow.** Chat UI: onboarding, resume picker, presence header, feed, composer with `/` menu and `@` picker, `/read` (local and teammate, offline reroute), consent card, `/task`, `/broadcast`, `/tasks` board, `/team`, `/agent`, plain-text local agent.
@@ -68,3 +68,5 @@ Owner request: the task area was too static (start/done only). Wanted: ask a fol
 - [x] **11. Screens.** Threads view (list, messages, reply box, review verdict picker, open-link and close keys), unread badge in the header, "ask a follow-up" and a follow-up count in the task view. 6 screen tests. 150 tests pass.
 - [x] **12. Deploy and release (0.4.0, 2026-11-23).** Rules and index deployed to `crewai-team-chat` (a read-only probe confirmed the index was ready); 0.4.0 published for all five platforms; a 0.3.3 build updated itself to it and the Linux installer ran it in WSL. Still not done: not seen yet in a real terminal, no macOS/Linux check, and `ctrl+o` (open in browser) is covered only by a unit test of the link check.
 - Not built: attaching more reviewers to an existing review, editing or deleting messages, notifications while crewai is closed, fetching PR details from GitHub (links are never opened or fetched by crewai itself).
+
+- [x] **13. Repository cleanup (2026-11-23).** Removed the Herdr fork (`herdr/`, about 3,150 tracked files), the Cloudflare relay (`relay/`), the old planning documents (`idea.md`, `spec.md`, `task.md`), `design/`, `spikes/`, `.codex/`, the old `docs/`, the Herdr installers and build script, the Herdr release workflow and a Herdr editor setting. Moved `review.txt` to `docs/code-review-2026-11-23.md`. Rewrote `README.md`, `AGENTS.md` and `.gitignore` for crewai only. Verified the app still typechecks, tests (150) and builds, and the remaining workflow only touches `app/`. Left alone: three local worktrees under `.worktrees/` whose branches (`ux-connections`, `ux-questions`, `ux-relay-trust`) hold 9 commits that are not in `main`, plus the untracked `aws_guide.txt`, `plan1.jpeg` and `website/`. No license has been chosen yet.

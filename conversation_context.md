@@ -43,7 +43,7 @@ Last updated: 2026-11-23. No secrets, keys or credentials are stored here.
 4. Authorization is Firestore Security Rules plus membership documents (no per-event signatures). Roles: `manager` and `member`. Managers issue invites; anyone can assign tasks in the MVP. Grant graph is deferred; the team graph view shows managers and members only.
 5. Presence is a heartbeat `lastSeen` timestamp; online means seen in the last 90 seconds.
 6. Agent isolation is not OS-enforced. The consent card always says "Limited protection". Codex runs with its read-only sandbox flag and Claude with read-only tools, both labelled best-effort.
-7. Legacy `herdr/`, `relay/`, `docs/`, `spec.md`, `task.md`, `idea.md` are kept unchanged. New app lives in `app/`. Nothing is deleted; removal is an owner decision.
+7. Legacy `herdr/`, `relay/`, `docs/`, `spec.md`, `task.md` and `idea.md` were kept at first and removed on 2026-11-23 at the owner's request. They remain in git history. The app lives in `app/`.
 8. `aws_guide.txt` and `website/` are untracked and out of scope; not read or copied.
 
 ## Prerequisites still needed from the owner
