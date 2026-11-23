@@ -54,3 +54,10 @@ Last updated: 2026-11-23. No secrets, keys or credentials are stored here.
 ## Status (2026-11-23)
 
 - Milestones 1-7 done; see tasks.md notes. Side panels from the handwritten sketch were replaced by the /tasks board and one feed (smallest change for a scrollback chat UI). Name rule: no spaces, so @mentions are unambiguous.
+
+## Firebase setup (2026-11-23)
+
+- Firebase CLI: local `firebase-tools@13` (run with `npx firebase`), logged in with the owner's Google account.
+- Created a new project `crewai-team-chat` (new, dedicated; none of the owner's five existing projects are touched) and a web app. `app/.firebaserc` points at it. The public web config is saved in the owner's `~/.crewai/.env`, not in the repository.
+- Assumption: Firestore location `asia-south1` (Mumbai); it cannot be changed after creation.
+- Done: Firestore API enabled and the (default) database created through the CLI login; rules deployed; Email/Password enabled by the owner in the console (enabling it by API would require billing). `--check` and the live contract tests pass.

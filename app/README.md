@@ -55,6 +55,7 @@ Local data lives in `~/.crewai` (`CREWAI_HOME` overrides): `identity.json` (this
 ```powershell
 npm test               # unit, engine and UI flow tests (in-memory service)
 npm run emulators      # same contract against the real Firestore rules (needs Java 11+)
+npm run test:live      # same contract against YOUR Firebase project in ~/.crewai (creates throwaway data)
 ```
 
 ## Known limits

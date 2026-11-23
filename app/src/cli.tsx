@@ -98,10 +98,9 @@ async function main(): Promise<number> {
   return 0;
 }
 
-main().then(
-  (code) => process.exit(code),
-  (e: unknown) => {
-    process.stderr.write(`crewai stopped: ${e instanceof Error ? e.message : String(e)}\n`);
-    process.exit(1);
-  },
-);
+// A short pause lets network handles finish closing; exiting at once can trip a libuv assertion on Windows.
+const exitSoon = (code: number) => setTimeout(() => process.exit(code), 150);
+main().then(exitSoon, (e: unknown) => {
+  process.stderr.write(`crewai stopped: ${e instanceof Error ? e.message : String(e)}\n`);
+  exitSoon(1);
+});

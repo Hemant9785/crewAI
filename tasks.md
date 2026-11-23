@@ -27,8 +27,11 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 - Unsent messages (unknown teammate, no agent, failed send) are put back in the message box. 54 tests pass.
 - The packed tarball installs into a clean folder and `crewai --version` / `--help` run. Windows now spawns agents without Node's shell-args warning.
 
+**Real Firebase (2026-11-23)**
+- Project `crewai-team-chat` (asia-south1) is live: Firestore database, deployed rules, Email/Password sign-in. `crewai --check` connects, and all 12 contract tests pass against it (`npm run test:live` in `app/`). Test users and data were deleted afterwards.
+
 **Known limitations**
-- Not tested: a real Firebase project (needs the owner's project and web config), real Codex/Claude answers through the full flow, macOS and Linux, long pasted text.
+- Not tested: real Codex/Claude answers through the full flow, macOS and Linux, long pasted text.
 - Not built: Google/Microsoft sign-in, admin controls, audit log, the team permission graph.
 - Invite codes can be brute-forced by automated clients; add App Check or a rate-limited function before launch.
 - Remote answers are not OS-sandboxed; the approval card says "Limited protection".

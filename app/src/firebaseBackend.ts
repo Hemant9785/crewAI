@@ -59,6 +59,9 @@ function mapError(e: unknown): BackendError {
   if (e instanceof BackendError) return e;
   const code = String((e as { code?: string }).code ?? '');
   if (code.includes('permission-denied')) return new BackendError('permission-denied', "You don't have access to that.");
+  if (code.includes('configuration-not-found')) {
+    return new BackendError('unavailable', 'Sign-in is not set up in the Firebase project. Enable Authentication > Email/Password in the console.');
+  }
   if (code.includes('not-found')) return new BackendError('not-found', 'Not found.');
   if (code.includes('unavailable') || code.includes('network-request-failed') || code.includes('deadline')) {
     return new BackendError('unavailable', "Can't reach the team service. Check your connection.");
