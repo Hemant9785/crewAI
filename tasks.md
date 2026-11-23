@@ -9,6 +9,7 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 - [x] **5. Main application flow.** Chat UI: onboarding, resume picker, presence header, feed, composer with `/` menu and `@` picker, `/read` (local and teammate, offline reroute), consent card, `/task`, `/broadcast`, `/tasks` board, `/team`, `/agent`, plain-text local agent.
 - [x] **6. Supporting features and polish.** Saved history and resume, `--demo` mode, README with Firebase setup, rules deploy script, error messages.
 - [x] **7. Milestone verification.** Typecheck, unit/engine/UI tests, Firestore rules contract tests on the emulator, build, manual run on a real terminal.
+- [ ] **8. Ship crewai 0.3.2.** Test the self-updater, verify Windows replacement, document `--update` and `doctor`, bump the app version, push `main`, tag `crewai-v0.3.2`, and verify all five release assets plus a real 0.3.1-to-0.3.2 update.
 
 ## Completion notes (2026-11-23)
 

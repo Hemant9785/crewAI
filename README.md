@@ -91,6 +91,34 @@ crewai
 The first run asks for your name, then "Join a team" (enter the 6-digit code from your manager) or
 "Create a team". Try `crewai --demo` first if you want to explore with simulated teammates.
 
+## Update and diagnose crewai
+
+Installed releases can update themselves:
+
+```sh
+crewai --update
+# or
+crewai update
+```
+
+The updater checks the newest stable `crewai-v*` release, downloads the binary for your system,
+verifies it against `SHA256SUMS`, and checks that it reports the expected version before replacing
+the installed program. On Windows, the running executable is renamed during replacement; the next
+start removes that old copy. Close and reopen other crewai windows to use the updated version.
+`crewai update --dry-run` checks whether an update is available without downloading it. If the
+installed folder is not writable, run the update with the permissions required for that folder or
+reinstall with the installer.
+
+For a support summary, run:
+
+```sh
+crewai doctor
+```
+
+It prints the version and install path, local data folder, detected Codex/Claude commands, team
+name, Firebase connection status, and whether a newer release is available. It does not print
+credentials.
+
 **Build the binaries yourself**
 
 ```sh
