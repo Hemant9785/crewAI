@@ -93,11 +93,13 @@ export function TaskView({
   return (
     <Box flexDirection="column" height={size.rows - 1} width={size.columns}>
       <Box justifyContent="space-between">
-        <Text>
+        <Text wrap="truncate-end">
           <Text bold color="cyan">◆ crewai</Text>
           <Text dimColor>  {team} · {shortPath(folder)} · Tasks</Text>
         </Text>
-        <Text dimColor>esc back to chat</Text>
+        <Box flexShrink={0} marginLeft={2}>
+          <Text dimColor>esc back to chat</Text>
+        </Box>
       </Box>
       <Box flexGrow={1} flexBasis={0}>
         {showList ? (

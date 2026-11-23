@@ -75,6 +75,26 @@ describe('wide layout (split view)', () => {
   });
 });
 
+describe('long folder paths', () => {
+  const LONG_DIR = 'a-very-long-project-folder-name-'.repeat(3);
+
+  it('keeps the no-agent hint whole when the path is long, at every width', async () => {
+    for (const columns of [140, 100, 80]) {
+      const w = await world(0, { agents: [] });
+      const m = await w.mount(columns, 30, LONG_DIR);
+      expect(m.frame()).toContain('no agent · install Codex or Claude Code, then /agent');
+    }
+  });
+
+  it('keeps "esc back to chat" in the task view header when the path is long', async () => {
+    const w = await world(3);
+    const m = await w.mount(100, 30, LONG_DIR);
+    await m.type(KEY.tab);
+    await vi.waitFor(() => expect(m.frame()).toContain('esc back to chat'));
+    expect(m.frame().split('\n')[0]!.length).toBeLessThanOrEqual(100);
+  });
+});
+
 describe('narrower terminals', () => {
   it('collapses the side column into a one-line strip at 80 to 109 columns, and Tab opens the task view', async () => {
     const w = await world(8);

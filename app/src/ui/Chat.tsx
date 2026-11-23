@@ -185,11 +185,13 @@ export function Chat({
           <Text bold color="cyan">◆ crewai</Text>
           <Text dimColor>  {s.team?.name}{mode === 'narrow' ? '' : ` · ${shortPath(folder)}`}</Text>
         </Text>
-        {s.agent ? (
-          <Text color="magenta">agent: {s.agent}</Text>
-        ) : (
-          <Text color="yellow">no agent · install Codex or Claude Code, then /agent</Text>
-        )}
+        <Box flexShrink={0} marginLeft={2}>
+          {s.agent ? (
+            <Text color="magenta">agent: {s.agent}</Text>
+          ) : (
+            <Text color="yellow">no agent · install Codex or Claude Code, then /agent</Text>
+          )}
+        </Box>
       </Box>
       {s.error ? <Text color="red" wrap="truncate-end">{s.error}</Text> : null}
 

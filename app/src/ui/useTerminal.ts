@@ -23,6 +23,7 @@ export function useTerminalSize(): Size {
     if (!stdout) return;
     const onResize = () => setSize(read());
     stdout.on('resize', onResize);
+    onResize(); // the window may have changed between the first render and this listener attaching
     return () => {
       stdout.off('resize', onResize);
     };

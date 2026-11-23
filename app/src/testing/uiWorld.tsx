@@ -55,17 +55,12 @@ export async function world(n: number, opts: { agents?: AgentName[] } = {}) {
   store.saveSettings({ displayName: 'Boss', teamId: team.id, teamName: 'Acme' });
   const holder: { engine?: Engine } = {};
 
-  const mount = async (columns: number, rows = 36) => {
+  const mount = async (columns: number, rows = 36, folderName = 'web-app') => {
     const ui = render(
-      <App backend={boss} store={store} runner={fakeRunner(opts.agents ?? ['codex'], (q) => `answer: ${q}`)} folder={join(tmp(), 'web-app')}
+      <App backend={boss} store={store} runner={fakeRunner(opts.agents ?? ['codex'], (q) => `answer: ${q}`)} folder={join(tmp(), folderName)}
         holder={holder} engineOptions={{ tickMs: 0, heartbeatMs: 0 }} />,
     );
     cleanups.push(() => ui.unmount(), () => holder.engine?.stop());
-    // Resize the fake terminal the way a real one resizes: set its size, then announce it.
-    const out = ui.stdout as unknown as NodeJS.WriteStream;
-    Object.defineProperty(out, 'columns', { value: columns, configurable: true });
-    Object.defineProperty(out, 'rows', { value: rows, configurable: true });
-    out.emit('resize');
     const type = async (s: string) => {
       ui.stdin.write(s);
       await tick();
@@ -73,7 +68,13 @@ export async function world(n: number, opts: { agents?: AgentName[] } = {}) {
     const frame = () => ui.lastFrame() ?? '';
     const waitFor = (t: string) => vi.waitFor(() => expect(frame()).toContain(t), { timeout: 4000 });
     await waitFor('Ask your agent, or type / for commands');
-    await tick(80);
+    // Resize the fake terminal the way a real one resizes: set its size, then announce it. Done after the
+    // first screen so the app's resize listener is certainly attached, even on a slow machine.
+    const out = ui.stdout as unknown as NodeJS.WriteStream;
+    Object.defineProperty(out, 'columns', { value: columns, configurable: true });
+    Object.defineProperty(out, 'rows', { value: rows, configurable: true });
+    out.emit('resize');
+    await tick(150);
     return { ui, type, frame, waitFor };
   };
   return { boss, team, cloud, mount, holder };
