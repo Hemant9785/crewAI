@@ -10,6 +10,7 @@ import type { Engine } from './engine.js';
 import { FirebaseBackend } from './firebaseBackend.js';
 import { SETUP_HINT, firebaseSource, loadFirebaseSettings } from './firebaseConfig.js';
 import { App } from './ui/App.js';
+import { withFrameWriter } from './ui/frameStream.js';
 import { formatCode } from './format.js';
 
 /** Replaced at build time by scripts/build-binary.mjs for the standalone binaries. */
@@ -110,7 +111,11 @@ async function main(): Promise<number> {
   process.once('exit', leave);
   let app;
   try {
-    app = render(<App backend={backend} store={store} runner={runner} folder={process.cwd()} holder={holder} />);
+    // The frame writer rewrites only the lines that changed. Ink's default erases and redraws the whole
+    // screen on every keystroke (about 25 times more output with the split view), which visibly flickers.
+    app = render(<App backend={backend} store={store} runner={runner} folder={process.cwd()} holder={holder} />, {
+      stdout: fullScreen ? withFrameWriter(process.stdout) : process.stdout,
+    });
     await app.waitUntilExit();
   } finally {
     leave();

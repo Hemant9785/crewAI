@@ -43,6 +43,10 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 - Verification: typecheck clean, 108 tests (unit tests for wrapping, task grouping/windowing and feed lines; screen tests at 140/100/70 columns with 20 and 30 tasks, focus, the task view, approvals, scrolling). Also run on a real Windows terminal (120 columns): panels aligned, live broadcast and task arrived while open.
 - Not verified: macOS/Linux terminals, very small heights (under about 15 rows), resizing a live window by hand, terminals without alternate-screen support. Mouse wheel is not handled.
 
+**Flicker fix (2026-11-23)**
+- Typing made the whole screen flicker: Ink's default renderer erases and redraws every line on each frame, and the terminal here does not honor synchronized output. Added `ui/frameStream.ts`, which keeps the previous frame and writes only changed lines at absolute positions (about 25 times fewer bytes per keystroke, about 4 times fewer over a whole session). Ink's own incremental mode was tried and rejected because it corrupted the screen.
+- Verification: unit tests for the writer, and a replay test that records the real app's output (typing, task view, scrolling, a resize) and checks a terminal emulator shows the identical screen after every frame. 119 tests pass. Not yet confirmed by eye in the owner's terminal.
+
 **Known limitations**
 - Not tested: real Codex/Claude answers through the full flow, macOS and Linux, long pasted text.
 - Not built: Google/Microsoft sign-in, admin controls, audit log, the team permission graph.
