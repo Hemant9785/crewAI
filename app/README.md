@@ -13,7 +13,11 @@ node dist/cli.js --demo
 
 Choose "Join a team" and enter the code it prints. Hemant, Shwetank and Priya are simulated; Ravi is away.
 
-## Install as a command
+## Install
+
+Most people should use the standalone binaries; see the install steps in the [main README](../README.md#install-crewai-standalone-app). To build one yourself: `npm ci && npm run build:binary` (bundles the app with esbuild into a Node single-executable file under `release/`; it embeds the Firebase settings from `CREWAI_FIREBASE_*` or `~/.crewai/.env`).
+
+## Install from source as a command
 
 ```powershell
 cd app

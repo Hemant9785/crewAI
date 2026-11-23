@@ -6,6 +6,90 @@
 > The Herdr fork (`herdr/`), Cloudflare relay (`relay/`) and their docs below
 > are kept unchanged as the legacy prototype.
 
+## Install crewai (standalone app)
+
+Type `crewai` in a project folder and a chat opens. Ask your agent about the folder, ask a
+teammate's agent about theirs, assign tasks, broadcast messages. It runs on Windows, macOS and
+Linux as a single file; you do not need Node.js.
+
+**Before you start**
+
+- Have Codex CLI or Claude Code installed to answer questions about your folder. Without one you
+  can still chat, assign tasks and broadcast.
+- The release binaries already contain the team service settings (a Firebase project). If you
+  built your own binary without them, see [app/README.md](app/README.md#connect-your-own-firebase-project).
+
+**1. Download** the file for your system from the
+[Releases page](https://github.com/Hemant9785/crewAI/releases) (tags named `crewai-v…`), plus `SHA256SUMS`:
+
+| System | File |
+|---|---|
+| Windows 64-bit | `crewai-windows-x64.exe` |
+| macOS, Apple silicon (M1 or newer) | `crewai-macos-arm64` |
+| macOS, Intel | `crewai-macos-x64` |
+| Linux 64-bit | `crewai-linux-x64` |
+| Linux ARM64 | `crewai-linux-arm64` |
+
+**2. Install**
+
+Windows (PowerShell, from the folder you downloaded to):
+
+```powershell
+Get-FileHash .\crewai-windows-x64.exe -Algorithm SHA256   # compare with SHA256SUMS
+$dir = "$env:LOCALAPPDATA\Programs\crewai"
+New-Item -ItemType Directory -Force $dir | Out-Null
+Move-Item -Force .\crewai-windows-x64.exe "$dir\crewai.exe"
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", "User") + ";$dir", "User")
+```
+
+Open a new terminal afterwards. The file is not code-signed, so double-clicking may show a
+"Windows protected your PC" warning (More info, then Run anyway); running it from a terminal does not.
+
+macOS and Linux (replace the file name with yours):
+
+```sh
+shasum -a 256 crewai-macos-arm64        # compare with SHA256SUMS (Linux: sha256sum)
+chmod +x crewai-macos-arm64
+sudo mv crewai-macos-arm64 /usr/local/bin/crewai
+xattr -d com.apple.quarantine /usr/local/bin/crewai   # macOS only: allow a downloaded, unsigned file
+```
+
+No `sudo`? Use `mkdir -p ~/.local/bin && mv crewai-linux-x64 ~/.local/bin/crewai` and make sure
+`~/.local/bin` is on your `PATH`.
+
+**3. Run it**
+
+```sh
+crewai --version
+cd path/to/your/project
+crewai
+```
+
+The first run asks for your name, then "Join a team" (enter the 6-digit code from your manager) or
+"Create a team". Try `crewai --demo` first if you want to explore with simulated teammates.
+
+**Build the binaries yourself**
+
+```sh
+cd app
+npm ci
+npm run build:binary        # builds for the OS you are on: app/release/crewai-<os>-<cpu>
+```
+
+To publish all five: set the repository variables `CREWAI_FIREBASE_PROJECT_ID`,
+`CREWAI_FIREBASE_API_KEY`, `CREWAI_FIREBASE_AUTH_DOMAIN` and `CREWAI_FIREBASE_APP_ID`
+(Settings, Secrets and variables, Actions, Variables), then run
+`git tag crewai-v0.1.0 && git push origin crewai-v0.1.0`. The
+[workflow](.github/workflows/crewai-release.yml) builds each binary on its own OS and attaches
+them, with `SHA256SUMS`, to a GitHub release.
+
+**Status:** the Windows x64 binary is built and tested (it starts and connects to Firebase). The
+macOS and Linux binaries are built by the workflow, which has not run yet, so they are untested.
+
+## Legacy Herdr prototype
+
+The sections below describe the earlier Herdr-based prototype and are kept unchanged.
+
 crewAI is a terminal-first team coding assistant built on top of Herdr. It
 combines local team coordination, signed task and broadcast records,
 permission-aware repository requests, and bounded agent execution.

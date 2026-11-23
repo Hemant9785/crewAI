@@ -12,7 +12,11 @@ import { SETUP_HINT, loadFirebaseSettings } from './firebaseConfig.js';
 import { App } from './ui/App.js';
 import { formatCode } from './format.js';
 
+/** Replaced at build time by scripts/build-binary.mjs for the standalone binaries. */
+declare const __CREWAI_VERSION__: string | undefined;
+
 function version(): string {
+  if (typeof __CREWAI_VERSION__ !== 'undefined') return __CREWAI_VERSION__;
   try {
     return (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }).version;
   } catch {

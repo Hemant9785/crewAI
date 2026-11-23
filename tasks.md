@@ -30,6 +30,11 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 **Real Firebase (2026-11-23)**
 - Project `crewai-team-chat` (asia-south1) is live: Firestore database, deployed rules, Email/Password sign-in. `crewai --check` connects, and all 12 contract tests pass against it (`npm run test:live` in `app/`). Test users and data were deleted afterwards.
 
+**Binaries (2026-11-23)**
+- `npm run build:binary` (in `app/`) bundles the app with esbuild into a Node single-executable file. A launcher unpacks the bundle into `~/.crewai/bin` because Node 24 can only start CommonJS from a single executable and Ink needs an ES module.
+- Windows x64 binary built and tested: `--version`, `--help`, `--check` (real Firebase, no local config) and the chat screen on a real terminal. The public Firebase config is embedded at build time.
+- `.github/workflows/crewai-release.yml` builds linux x64/arm64, macOS Intel/arm64 and Windows on their own runners and publishes them on a `crewai-v*` tag. **Not run yet**, so the macOS and Linux binaries are untested; macOS Intel uses the `macos-13` runner label, which may need changing. Binaries are not code-signed.
+
 **Known limitations**
 - Not tested: real Codex/Claude answers through the full flow, macOS and Linux, long pasted text.
 - Not built: Google/Microsoft sign-in, admin controls, audit log, the team permission graph.

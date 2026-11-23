@@ -1,6 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+/** JSON of the public Firebase web config, replaced at build time for the standalone binaries. */
+declare const __CREWAI_FIREBASE__: string | undefined;
+
 export interface FirebaseSettings {
   apiKey: string;
   authDomain?: string;
@@ -24,14 +27,20 @@ export function loadFirebaseSettings(home: string, env: NodeJS.ProcessEnv = proc
   } catch {
     /* optional */
   }
-  const projectId = env.CREWAI_FIREBASE_PROJECT_ID ?? file.projectId;
-  const apiKey = env.CREWAI_FIREBASE_API_KEY ?? file.apiKey ?? (emulator ? 'demo-key' : undefined);
+  let embedded: Partial<FirebaseSettings> = {};
+  try {
+    if (typeof __CREWAI_FIREBASE__ === 'string' && __CREWAI_FIREBASE__) embedded = JSON.parse(__CREWAI_FIREBASE__) as Partial<FirebaseSettings>;
+  } catch {
+    /* ignore a malformed embedded value */
+  }
+  const projectId = env.CREWAI_FIREBASE_PROJECT_ID ?? file.projectId ?? embedded.projectId;
+  const apiKey = env.CREWAI_FIREBASE_API_KEY ?? file.apiKey ?? embedded.apiKey ?? (emulator ? 'demo-key' : undefined);
   if (!projectId || !apiKey) return null;
   return {
     apiKey,
     projectId,
-    authDomain: env.CREWAI_FIREBASE_AUTH_DOMAIN ?? file.authDomain,
-    appId: env.CREWAI_FIREBASE_APP_ID ?? file.appId,
+    authDomain: env.CREWAI_FIREBASE_AUTH_DOMAIN ?? file.authDomain ?? embedded.authDomain,
+    appId: env.CREWAI_FIREBASE_APP_ID ?? file.appId ?? embedded.appId,
     emulator,
   };
 }
