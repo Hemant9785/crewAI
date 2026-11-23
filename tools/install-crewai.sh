@@ -38,6 +38,11 @@ if [ -z "$arch" ]; then
 fi
 file="crewai-$os-$arch"
 
+tmp=$(mktemp -d 2>/dev/null || mktemp -d -t crewai)
+trap 'rm -rf "$tmp"' EXIT INT TERM
+lookup_err="$tmp/lookup.err"
+: > "$lookup_err"
+
 base="${CREWAI_BASE_URL:-}"
 if [ -z "$base" ]; then
   tag="${CREWAI_VERSION:-}"
@@ -46,7 +51,9 @@ if [ -z "$base" ]; then
     # Newest crewai-v* release that is neither a draft nor a pre-release (same rule as install-crewai.ps1).
     # The API may send the JSON on one line or pretty-printed, so split it into one field per line
     # first. In each release, tag_name comes before draft and prerelease (in either order).
-    tag=$(curl -fsSL -H "User-Agent: crewai-installer" "https://api.github.com/repos/$REPO/releases?per_page=30" |
+    api_json=$(curl -fsSL -H "User-Agent: crewai-installer" "https://api.github.com/repos/$REPO/releases?per_page=30" 2>"$lookup_err") ||
+      api_json=""
+    tag=$(printf '%s' "$api_json" |
       tr ',{}' '\n\n\n' |
       awk '
         function check() {
@@ -59,14 +66,18 @@ if [ -z "$base" ]; then
         /"draft" *:/ { d = ($0 ~ /true/) ? "true" : "false"; check() }
         /"prerelease" *:/ { p = ($0 ~ /true/) ? "true" : "false"; check() }
       ') || true
-    [ -n "$tag" ] || fail "no crewai release was found at https://github.com/$REPO/releases yet."
+    if [ -z "$tag" ]; then
+      # The API limits anonymous requests per IP address (shared cloud addresses often hit it).
+      # The public release feed has no such limit; it lists releases newest first.
+      [ -n "$api_json" ] || say "GitHub API unavailable ($(head -c 200 "$lookup_err" 2>/dev/null | tr '\n' ' ')); using the release feed instead."
+      tag=$(curl -fsSL "https://github.com/$REPO/releases.atom" 2>>"$lookup_err" |
+        grep -o 'releases/tag/crewai-v[^"<]*' | head -n 1 | sed 's|releases/tag/||') || true
+    fi
+    [ -n "$tag" ] || fail "could not find a crewai release at https://github.com/$REPO/releases ($(head -c 200 "$lookup_err" 2>/dev/null | tr '\n' ' ')). Set CREWAI_VERSION=crewai-vX.Y.Z to skip the lookup."
   fi
   base="https://github.com/$REPO/releases/download/$tag"
 fi
 base="${base%/}"
-
-tmp=$(mktemp -d 2>/dev/null || mktemp -d -t crewai)
-trap 'rm -rf "$tmp"' EXIT INT TERM
 
 say "Downloading $file ..."
 curl -fsSL "$base/$file" -o "$tmp/$file" || fail "could not download $base/$file"
