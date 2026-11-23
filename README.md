@@ -19,6 +19,29 @@ Linux as a single file; you do not need Node.js.
 - The release binaries already contain the team service settings (a Firebase project). If you
   built your own binary without them, see [app/README.md](app/README.md#connect-your-own-firebase-project).
 
+**Quick install (one command)**
+
+Windows (PowerShell):
+
+```powershell
+powershell -c "irm https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-crewai.ps1 | iex"
+```
+
+macOS and Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-crewai.sh | sh
+```
+
+The installer finds the newest `crewai-v…` release, downloads the right file for your system,
+checks its SHA-256 checksum (and installs nothing if it does not match), puts `crewai` on your
+PATH and prints the version. It needs no admin rights: it installs to
+`%LOCALAPPDATA%\Programs\crewai` on Windows and `~/.local/bin` on macOS and Linux. Open a new
+terminal afterwards. To pin a version, set `CREWAI_VERSION=crewai-v0.1.0` first; to choose the
+folder, set `CREWAI_INSTALL_DIR`. It works once a release has been published (see below).
+
+**Manual install**
+
 **1. Download** the file for your system from the
 [Releases page](https://github.com/Hemant9785/crewAI/releases) (tags named `crewai-v…`), plus `SHA256SUMS`:
 

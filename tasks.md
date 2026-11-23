@@ -35,6 +35,9 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 - Windows x64 binary built and tested: `--version`, `--help`, `--check` (real Firebase, no local config) and the chat screen on a real terminal. The public Firebase config is embedded at build time.
 - `.github/workflows/crewai-release.yml` builds linux x64/arm64, macOS Intel/arm64 and Windows on their own runners and publishes them on a `crewai-v*` tag. **Not run yet**, so the macOS and Linux binaries are untested; macOS Intel uses the `macos-13` runner label, which may need changing. Binaries are not code-signed.
 
+**One-line installers (2026-11-23)**
+- `tools/install-crewai.ps1` and `tools/install-crewai.sh` find the newest `crewai-v*` release, verify the SHA-256 checksum, and install without admin rights. Tested against a local fake release server: Windows (good download installed and ran; tampered download refused) and the shell script with a stub binary (same, plus no duplicate PATH lines, unsupported-OS error). Not tested against a real GitHub release or on real macOS/Linux. They only work after this is pushed to `main` and a `crewai-v*` release exists.
+
 **Known limitations**
 - Not tested: real Codex/Claude answers through the full flow, macOS and Linux, long pasted text.
 - Not built: Google/Microsoft sign-in, admin controls, audit log, the team permission graph.
