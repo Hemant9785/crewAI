@@ -11,6 +11,8 @@ export interface ComposerProps {
   now: number;
   onSubmit: (text: string) => void;
   onEmptyChange?: (empty: boolean) => void;
+  /** Tab pressed while the box is empty. */
+  onTab?: () => void;
   placeholder?: string;
   /** False while another part of the screen has keyboard focus. The draft stays. */
   active?: boolean;
@@ -22,7 +24,7 @@ export interface ComposerProps {
 const STRICT_NO_ARGS = ['tasks', 'new', 'help', 'quit'];
 const OPTIONAL_ARGS = ['team', 'agent'];
 
-export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange, placeholder, restore, active = true, hint }: ComposerProps) {
+export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange, onTab, placeholder, restore, active = true, hint }: ComposerProps) {
   const [value, setValue] = useState('');
   const [cursor, setCursor] = useState(0);
   const [sel, setSel] = useState(0);
@@ -81,9 +83,12 @@ export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange
       set('');
       return;
     }
-    if (key.tab && open) {
+    if (key.tab) {
       if (open === 'cmd') set(`/${cmds[shown]!.name} `);
-      else insertMention(people[shown]!);
+      else if (open === 'mention') insertMention(people[shown]!);
+      // With nothing typed, Tab belongs to the screen (move to the task panel). Decided here, from the text
+      // itself, so a Tab right after typing can never be mistaken for "the box is empty".
+      else if (value === '') onTab?.();
       return;
     }
     if (key.escape) {

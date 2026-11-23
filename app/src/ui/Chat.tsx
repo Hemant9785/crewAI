@@ -92,10 +92,6 @@ export function Chat({
       const page = Math.max(1, convH - 2);
       if (key.pageUp) setScroll(Math.min(maxScroll, shownScroll + page));
       else if (key.pageDown) setScroll(Math.max(0, shownScroll - page));
-      else if (key.tab && composerEmpty && focus === 'composer') {
-        if (wide) setFocus('tasks');
-        else setView('tasks');
-      }
     },
     { isActive: inChat && focus === 'composer' },
   );
@@ -255,6 +251,7 @@ export function Chat({
         now={s.now}
         onSubmit={(t) => void submit(t)}
         onEmptyChange={setComposerEmpty}
+        onTab={() => (wide ? setFocus('tasks') : setView('tasks'))}
         restore={restore}
         active={focus === 'composer'}
         hint={hint}
