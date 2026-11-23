@@ -1,6 +1,6 @@
 {
   "name": "crewai",
-  "version": "0.3.4",
+  "version": "0.4.0",
   "description": "Team chat for coding agents, in your terminal",
   "type": "module",
   "bin": {
