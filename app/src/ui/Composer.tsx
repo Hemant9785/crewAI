@@ -21,7 +21,7 @@ export interface ComposerProps {
   restore?: { text: string; n: number };
 }
 
-const STRICT_NO_ARGS = ['tasks', 'new', 'help', 'quit'];
+const STRICT_NO_ARGS = ['tasks', 'threads', 'new', 'help', 'quit'];
 const OPTIONAL_ARGS = ['team', 'agent'];
 
 export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange, onTab, placeholder, restore, active = true, hint }: ComposerProps) {

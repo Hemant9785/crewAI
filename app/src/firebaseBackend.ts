@@ -32,6 +32,8 @@ import {
   type Timestamp,
 } from 'firebase/firestore';
 import { BackendError, type Backend, type Unsubscribe } from './backend.js';
+import { parsePrUrl } from './pr.js';
+import { THREAD_LIMITS, type Thread, type ThreadKind, type ThreadMessage, type ThreadStatus, type Verdict } from './types.js';
 import type { Identity } from './config.js';
 import type { FirebaseSettings } from './firebaseConfig.js';
 import {
@@ -116,6 +118,21 @@ const toRequest = (d: QueryDocumentSnapshot | DocumentSnapshot, now: number): Re
 };
 
 const lower = (n: string) => n.toLowerCase();
+
+const toThread = (d: QueryDocumentSnapshot | DocumentSnapshot, now: number): Thread => {
+  const x = d.data(SNAP) as DocumentData;
+  return {
+    id: d.id, kind: x.kind, taskId: x.taskId ?? '', taskNum: x.taskNum ?? 0, title: x.title, prUrl: x.prUrl ?? '',
+    createdByUid: x.createdByUid, createdByName: x.createdByName,
+    participants: x.participants ?? [], participantNames: x.participantNames ?? [], status: x.status,
+    lastText: x.lastText ?? '', lastFromUid: x.lastFromUid ?? '', lastFromName: x.lastFromName ?? '', lastVerdict: x.lastVerdict ?? '',
+    createdAt: toMs(x.createdAt, now), updatedAt: toMs(x.updatedAt, now),
+  };
+};
+const toThreadMessage = (d: QueryDocumentSnapshot, now: number): ThreadMessage => {
+  const x = d.data(SNAP);
+  return { id: d.id, fromUid: x.fromUid, fromName: x.fromName, text: x.text, verdict: x.verdict ?? '', createdAt: toMs(x.createdAt, now) };
+};
 
 export class FirebaseBackend implements Backend {
   onError?: (e: BackendError) => void;
@@ -490,6 +507,109 @@ export class FirebaseBackend implements Backend {
       mk('moved', query(col, where('movedFrom', 'array-contains', this.uid), orderBy('updatedAt', 'desc'), limit(REQUEST_LIMIT))),
     ];
     return () => unsubs.forEach((u) => u());
+  }
+
+  // ───────────────────────── threads (private: only participants can read or write)
+
+  async createThread(
+    teamId: string,
+    input: { kind: ThreadKind; taskId?: string; title: string; prUrl?: string; participants: { uid: string; name: string }[]; text: string },
+  ): Promise<Thread> {
+    if (input.kind !== 'followup' && input.kind !== 'review') throw new BackendError('invalid', 'Unknown kind of conversation.');
+    const title = input.title.trim();
+    const text = input.text.trim();
+    if (!title || title.length > THREAD_LIMITS.title) throw new BackendError('invalid', 'Title is empty or too long.');
+    if (!text || text.length > LIMITS.text) throw new BackendError('invalid', 'Message is empty or too long.');
+    let prUrl = '';
+    if (input.kind === 'review') {
+      const pr = parsePrUrl(input.prUrl ?? '');
+      if (!pr.ok) throw new BackendError('invalid', pr.error);
+      prUrl = pr.url;
+    } else if (input.prUrl) {
+      throw new BackendError('invalid', 'Only a review has a pull request link.');
+    }
+    const others = [...new Set(input.participants.map((p) => p.uid))].filter((u) => u !== this.uid);
+    if (others.length === 0) throw new BackendError('invalid', 'Choose at least one other person.');
+    if (others.length + 1 > THREAD_LIMITS.participants) {
+      throw new BackendError('invalid', `That is too many people (at most ${THREAD_LIMITS.participants}).`);
+    }
+    return guard(async () => {
+      const meName = await this.myName(teamId);
+      const names: string[] = [];
+      for (const uid of others) {
+        const m = await getDoc(this.memberRef(teamId, uid));
+        if (!m.exists()) throw new BackendError('invalid', 'Everyone in a conversation must be in this team.');
+        names.push((m.data() as DocumentData).name as string);
+      }
+      let taskNum = 0;
+      if (input.taskId) {
+        const t = await getDoc(doc(this.db, 'teams', teamId, 'tasks', input.taskId));
+        if (!t.exists()) throw new BackendError('not-found', 'That task was not found.');
+        taskNum = (t.data() as DocumentData).num as number;
+      }
+      const ref = doc(collection(this.db, 'teams', teamId, 'threads'));
+      const now = this.serverNow();
+      const data = {
+        kind: input.kind, taskId: input.taskId ?? '', taskNum, title, prUrl,
+        createdByUid: this.uid, createdByName: meName,
+        participants: [this.uid, ...others], participantNames: [meName, ...names], status: 'open' as ThreadStatus,
+        lastText: text.slice(0, THREAD_LIMITS.preview), lastFromUid: this.uid, lastFromName: meName, lastVerdict: '' as Verdict,
+      };
+      const b = writeBatch(this.db);
+      b.set(ref, { ...data, createdAt: serverTimestamp(), updatedAt: serverTimestamp() });
+      b.set(doc(collection(ref, 'messages')), { fromUid: this.uid, fromName: meName, text, verdict: '', createdAt: serverTimestamp() });
+      await b.commit();
+      return { id: ref.id, ...data, createdAt: now, updatedAt: now };
+    });
+  }
+
+  async postMessage(teamId: string, threadId: string, input: { text: string; verdict?: Verdict }): Promise<void> {
+    const text = input.text.trim();
+    const verdict = input.verdict ?? '';
+    if (!text || text.length > LIMITS.text) throw new BackendError('invalid', 'Message is empty or too long.');
+    if (!['', 'approved', 'changes', 'comment'].includes(verdict)) throw new BackendError('invalid', 'Unknown verdict.');
+    return guard(async () => {
+      const name = await this.myName(teamId);
+      const tref = doc(this.db, 'teams', teamId, 'threads', threadId);
+      const snap = await getDoc(tref); // a thread you are not in cannot even be read, so this is denied
+      if (!snap.exists()) throw new BackendError('not-found', 'That conversation was not found.');
+      const t = snap.data() as DocumentData;
+      if (t.status !== 'open') throw new BackendError('conflict', 'This conversation is closed.');
+      if (verdict !== '' && (t.kind !== 'review' || t.createdByUid === this.uid)) {
+        throw new BackendError('invalid', 'Only a reviewer can approve or ask for changes.');
+      }
+      const b = writeBatch(this.db);
+      b.set(doc(collection(tref, 'messages')), { fromUid: this.uid, fromName: name, text, verdict, createdAt: serverTimestamp() });
+      b.update(tref, {
+        updatedAt: serverTimestamp(), lastText: text.slice(0, THREAD_LIMITS.preview),
+        lastFromUid: this.uid, lastFromName: name, lastVerdict: verdict,
+      });
+      await b.commit();
+    });
+  }
+
+  async setThreadStatus(teamId: string, threadId: string, status: ThreadStatus): Promise<void> {
+    if (status !== 'open' && status !== 'closed') throw new BackendError('invalid', 'Unknown status.');
+    return guard(() => updateDoc(doc(this.db, 'teams', teamId, 'threads', threadId), { status }));
+  }
+
+  subscribeThreads(teamId: string, cb: (t: Thread[]) => void): Unsubscribe {
+    const q = query(
+      collection(this.db, 'teams', teamId, 'threads'),
+      where('participants', 'array-contains', this.uid),
+      orderBy('updatedAt', 'desc'),
+      limit(100),
+    );
+    return this.watch(q, toThread, cb);
+  }
+
+  subscribeMessages(teamId: string, threadId: string, cb: (m: ThreadMessage[]) => void): Unsubscribe {
+    const q = query(
+      collection(this.db, 'teams', teamId, 'threads', threadId, 'messages'),
+      orderBy('createdAt', 'asc'),
+      limit(THREAD_LIMITS.messages),
+    );
+    return this.watch(q, toThreadMessage, cb);
   }
 
   async close(): Promise<void> {

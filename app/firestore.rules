@@ -13,6 +13,7 @@ service cloud.firestore {
     function namePath(teamId, n) { return /databases/$(database)/documents/teams/$(teamId)/names/$(n); }
     function invitePath(code) { return /databases/$(database)/documents/invites/$(code); }
     function ticketPath(uid) { return /databases/$(database)/documents/joinTickets/$(uid); }
+    function threadPath(teamId, id) { return /databases/$(database)/documents/teams/$(teamId)/threads/$(id); }
 
     function isMember(teamId) { return signedIn() && exists(memberPath(teamId, request.auth.uid)); }
     function me(teamId) { return get(memberPath(teamId, request.auth.uid)).data; }
@@ -188,6 +189,70 @@ service cloud.firestore {
 
       // A question has exactly one owner at a time. Only the asker, the current target
       // and previous targets (so they can learn it moved) can read it.
+      // Private conversations: follow-up questions about a task and pull request reviews. Only the people
+      // listed in `participants` (and only while they are still team members) can read or write them. They are
+      // never part of the team-wide feed. The latest message is copied onto the thread for lists and alerts.
+      match /threads/{threadId} {
+        allow read: if isMember(teamId) && request.auth.uid in resource.data.participants;
+        allow create: if isMember(teamId)
+          && request.resource.data.keys().hasOnly(['kind', 'taskId', 'taskNum', 'title', 'prUrl', 'createdByUid', 'createdByName', 'participants', 'participantNames', 'status', 'lastText', 'lastFromUid', 'lastFromName', 'lastVerdict', 'createdAt', 'updatedAt'])
+          && request.resource.data.kind in ['followup', 'review']
+          && request.resource.data.createdByUid == request.auth.uid
+          && request.resource.data.createdByName == me(teamId).name
+          && request.resource.data.participants is list
+          && request.resource.data.participants.size() >= 2
+          && request.resource.data.participants.size() <= 20
+          && request.auth.uid in request.resource.data.participants
+          && request.resource.data.participantNames is list
+          && request.resource.data.participantNames.size() == request.resource.data.participants.size()
+          && okText(request.resource.data.title, 200)
+          && request.resource.data.taskId is string && request.resource.data.taskId.size() <= 40
+          && request.resource.data.taskNum is int && request.resource.data.taskNum >= 0
+          && ((request.resource.data.kind == 'followup' && request.resource.data.prUrl == '')
+              || (request.resource.data.kind == 'review' && request.resource.data.prUrl.matches('^https://[^ ]{4,490}$')))
+          && request.resource.data.status == 'open'
+          && request.resource.data.lastFromUid == request.auth.uid
+          && request.resource.data.lastFromName == me(teamId).name
+          && request.resource.data.lastText is string && request.resource.data.lastText.size() <= 200
+          && request.resource.data.lastVerdict == ''
+          && serverTime(request.resource.data.createdAt)
+          && serverTime(request.resource.data.updatedAt);
+        allow update: if isMember(teamId)
+          && request.auth.uid in resource.data.participants
+          && (
+            // the person who started it closes or reopens it
+            (changed(['status'])
+              && request.resource.data.status in ['open', 'closed']
+              && resource.data.createdByUid == request.auth.uid)
+            ||
+            // a participant posts a message while it is open (the thread records the latest one)
+            (changed(['updatedAt', 'lastText', 'lastFromUid', 'lastFromName', 'lastVerdict'])
+              && resource.data.status == 'open'
+              && request.resource.data.lastFromUid == request.auth.uid
+              && request.resource.data.lastFromName == me(teamId).name
+              && request.resource.data.lastText is string && request.resource.data.lastText.size() <= 200
+              && request.resource.data.lastVerdict in ['', 'approved', 'changes', 'comment']
+              && serverTime(request.resource.data.updatedAt))
+          );
+
+        match /messages/{messageId} {
+          allow read: if isMember(teamId) && request.auth.uid in get(threadPath(teamId, threadId)).data.participants;
+          allow create: if isMember(teamId)
+            && request.auth.uid in getAfter(threadPath(teamId, threadId)).data.participants
+            && request.resource.data.keys().hasOnly(['fromUid', 'fromName', 'text', 'verdict', 'createdAt'])
+            && request.resource.data.fromUid == request.auth.uid
+            && request.resource.data.fromName == me(teamId).name
+            && okText(request.resource.data.text, 2000)
+            && request.resource.data.verdict in ['', 'approved', 'changes', 'comment']
+            // only a reviewer (not the author) of a review can attach a verdict
+            && (request.resource.data.verdict == ''
+                || (getAfter(threadPath(teamId, threadId)).data.kind == 'review'
+                    && getAfter(threadPath(teamId, threadId)).data.createdByUid != request.auth.uid))
+            && (!exists(threadPath(teamId, threadId)) || get(threadPath(teamId, threadId)).data.status == 'open')
+            && serverTime(request.resource.data.createdAt);
+        }
+      }
+
       match /requests/{id} {
         allow read: if isMember(teamId)
           && (resource.data.askerUid == request.auth.uid

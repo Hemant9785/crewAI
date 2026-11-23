@@ -88,3 +88,49 @@ export function isOnline(m: Pick<Member, 'lastSeen'>, now: number = Date.now()):
 }
 
 export const TERMINAL_REQUEST: ReadonlySet<RequestStatus> = new Set(['answered', 'declined', 'cancelled', 'failed']);
+
+// ───────────────────────── discussion threads: follow-up questions and PR reviews
+
+export type ThreadKind = 'followup' | 'review';
+/** What a reviewer decided with a message. '' is a plain reply. */
+export type Verdict = '' | 'approved' | 'changes' | 'comment';
+export type ThreadStatus = 'open' | 'closed';
+
+/**
+ * A private conversation. Only the people in `participants` can read it or write to it; it is not part of the
+ * team-wide feed. A follow-up is about a task; a review is about a pull request link.
+ */
+export interface Thread {
+  id: string;
+  kind: ThreadKind;
+  /** The task this is about, or '' / 0 when it is not tied to one. */
+  taskId: string;
+  taskNum: number;
+  title: string;
+  /** The pull request link for a review, '' for a follow-up. */
+  prUrl: string;
+  createdByUid: string;
+  createdByName: string;
+  /** User ids, creator first. `participantNames` lines up with it. */
+  participants: string[];
+  participantNames: string[];
+  status: ThreadStatus;
+  /** The latest message, so lists and notifications need no extra reads. */
+  lastText: string;
+  lastFromUid: string;
+  lastFromName: string;
+  lastVerdict: Verdict;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ThreadMessage {
+  id: string;
+  fromUid: string;
+  fromName: string;
+  text: string;
+  verdict: Verdict;
+  createdAt: number;
+}
+
+export const THREAD_LIMITS = { participants: 20, title: 200, url: 500, preview: 200, messages: 300 } as const;

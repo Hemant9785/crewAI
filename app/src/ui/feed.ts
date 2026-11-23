@@ -66,6 +66,13 @@ export function buildFeed(entries: Entry[], width: number, now: number): Line[] 
         );
         break;
       }
+      case 'thread': {
+        const lines = wrap(e.text, body - 2);
+        lines.forEach((l, i) =>
+          out.push(i === 0 ? [time, { t: '\u2709 ', color: 'cyan' }, { t: l, color: 'cyan' }] : [pad(INDENT + 2), { t: l, color: 'cyan' }]),
+        );
+        break;
+      }
       default: {
         wrap(e.text, body).forEach((l, i) => out.push(i === 0 ? [time, { t: l, dim: true }] : [pad(INDENT), { t: l, dim: true }]));
       }

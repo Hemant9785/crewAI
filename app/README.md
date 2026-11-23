@@ -39,7 +39,10 @@ Then run `crewai` in any project folder. (Publishing to npm is not set up; the p
 | `/read @name question` | asks that teammate's agent about their folder (they approve first) |
 | `/task @a @b what to do` | one task per person; marking one done broadcasts it |
 | `/broadcast message` | message to everyone |
-| `/tasks` | task board: s start, d done, h need help, x cancel |
+| `/tasks` | task board: s start, d done, h need help, x cancel, f ask a follow-up, t follow-ups |
+| `/followup T-4 [@name] question` | ask about a task. Private: only you and the person you ask can see it (default: the other person on the task) |
+| `/review <link> @name comments` | share a pull request with your comments. Reviewers reply with Comment, Approve or Request changes. `@team` asks everyone |
+| `/threads` | your private conversations (follow-ups and reviews); `ctrl+o` opens a review's link in your browser, `ctrl+x` closes one you started |
 | `/team`, `/team invite` | people and presence; managers create a 6-digit invite |
 | `/team remove @name`, `/team promote @name` | managers remove someone (not the owner) or make them a manager |
 | `/team leave` | leave the team (the owner cannot leave) |

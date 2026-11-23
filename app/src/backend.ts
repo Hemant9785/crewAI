@@ -7,6 +7,11 @@ import type {
   Task,
   TaskStatus,
   Team,
+  Thread,
+  ThreadKind,
+  ThreadMessage,
+  ThreadStatus,
+  Verdict,
 } from './types.js';
 
 export type Unsubscribe = () => void;
@@ -91,6 +96,30 @@ export interface Backend {
   ): Promise<void>;
   /** Requests where I am the asker, the current target, or a previous target. */
   subscribeRequests(teamId: string, cb: (items: ReadRequest[]) => void): Unsubscribe;
+
+  /**
+   * Starts a private thread with the chosen people (you are always included). The text is its first message.
+   * A review needs a valid https pull request link; a follow-up may be about one of your team's tasks.
+   */
+  createThread(
+    teamId: string,
+    input: {
+      kind: ThreadKind;
+      taskId?: string;
+      title: string;
+      prUrl?: string;
+      participants: { uid: string; name: string }[];
+      text: string;
+    },
+  ): Promise<Thread>;
+  /** Participants only, while the thread is open. Only a reviewer (not the author) may attach a verdict. */
+  postMessage(teamId: string, threadId: string, input: { text: string; verdict?: Verdict }): Promise<void>;
+  /** The person who started the thread closes or reopens it. */
+  setThreadStatus(teamId: string, threadId: string, status: ThreadStatus): Promise<void>;
+  /** Threads I take part in, newest activity first. Nobody else's threads are ever delivered. */
+  subscribeThreads(teamId: string, cb: (items: Thread[]) => void): Unsubscribe;
+  /** Messages of one thread, oldest first. Empty unless I am a participant. */
+  subscribeMessages(teamId: string, threadId: string, cb: (items: ThreadMessage[]) => void): Unsubscribe;
 
   close(): Promise<void>;
 }

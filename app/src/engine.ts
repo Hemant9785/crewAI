@@ -5,6 +5,8 @@ import { BackendError, type Backend, type Unsubscribe } from './backend.js';
 import { COMMANDS, parseInput, resolveMention } from './commands.js';
 import { ALLOW_DAYS, appendEntry, type Entry, type EntryKind, type LocalStore, type Session } from './config.js';
 import { ago, clip, formatCode } from './format.js';
+import { startFollowup, startReview, threadEntries, unreadThreads, type ThreadCtx } from './threads.js';
+import type { Thread, ThreadMessage, ThreadStatus, Verdict } from './types.js';
 import {
   HEARTBEAT_MS,
   isOnline,
@@ -17,6 +19,14 @@ import {
   type TaskStatus,
   type Team,
 } from './types.js';
+
+interface RawData {
+  members: Member[];
+  tasks: Task[];
+  broadcasts: Broadcast[];
+  requests: ReadRequest[];
+  threads: Thread[];
+}
 
 export type Attention =
   | { type: 'consent'; request: ReadRequest }
@@ -38,6 +48,7 @@ export interface EngineState {
   tasks: Task[];
   broadcasts: Broadcast[];
   requests: ReadRequest[];
+  threads: Thread[];
   entries: Entry[];
   agent: AgentName | null;
   available: AgentName[];
@@ -51,7 +62,7 @@ export interface EngineState {
 }
 
 /** `keepDraft` tells the UI to put the text back in the message box because nothing was sent. */
-export type Outcome = { action?: 'quit' | 'new' | 'tasks'; keepDraft?: boolean };
+export type Outcome = { action?: 'quit' | 'new' | 'tasks' | 'threads'; keepDraft?: boolean };
 
 export interface EngineDeps {
   backend: Backend;
@@ -85,7 +96,7 @@ export class Engine {
 
   constructor(private d: EngineDeps) {
     this.s = {
-      ready: false, team: null, me: null, members: [], tasks: [], broadcasts: [], requests: [], entries: [],
+      ready: false, team: null, me: null, members: [], tasks: [], broadcasts: [], requests: [], threads: [], entries: [],
       agent: null, available: [], pref: d.store.settings().agent, attention: [], busy: '', now: this.now(), error: '',
       responder: false,
     };
@@ -126,8 +137,8 @@ export class Engine {
     if (seen[team.id] === undefined) this.d.store.saveSettings({ answersSeenAt: { ...seen, [team.id]: this.now() } });
     await this.refreshAgents(true);
     await this.heartbeat();
-    const raw: { members: Member[]; tasks: Task[]; broadcasts: Broadcast[]; requests: ReadRequest[] } = {
-      members: [], tasks: [], broadcasts: [], requests: [],
+    const raw: RawData = {
+      members: [], tasks: [], broadcasts: [], requests: [], threads: [],
     };
     const upd = <K extends keyof typeof raw>(k: K) => (v: (typeof raw)[K]) => {
       raw[k] = v;
@@ -138,6 +149,7 @@ export class Engine {
       b.subscribeBroadcasts(team.id, upd('broadcasts')),
       b.subscribeTasks(team.id, upd('tasks')),
       b.subscribeRequests(team.id, upd('requests')),
+      b.subscribeThreads(team.id, upd('threads')),
     );
     const tickMs = this.d.tickMs ?? 5000;
     const beatMs = this.d.heartbeatMs ?? HEARTBEAT_MS;
@@ -218,9 +230,9 @@ export class Engine {
 
   // ───────────────────────── incoming data
 
-  private ingest(raw: { members: Member[]; tasks: Task[]; broadcasts: Broadcast[]; requests: ReadRequest[] }): void {
+  private ingest(raw: RawData): void {
     const me = raw.members.find((m) => m.uid === this.d.backend.uid) ?? null;
-    this.s = { ...this.s, me, members: raw.members, tasks: raw.tasks, broadcasts: raw.broadcasts, requests: raw.requests };
+    this.s = { ...this.s, me, members: raw.members, tasks: raw.tasks, broadcasts: raw.broadcasts, requests: raw.requests, threads: raw.threads };
     this.recompute();
   }
 
@@ -270,6 +282,7 @@ export class Engine {
         });
       }
     }
+    for (const t of threadEntries(s.threads, me.uid, since)) fresh.push(t);
     for (const r of s.requests) {
       if (r.askerUid === me.uid) {
         const outcome = r.status === 'answered' || r.status === 'declined' || r.status === 'failed';
@@ -508,6 +521,14 @@ export class Engine {
           return { action: 'new' };
         case 'tasks':
           return { action: 'tasks' };
+        case 'threads':
+          return { action: 'threads' };
+        case 'followup':
+          this.sys(await startFollowup(this.threadCtx(), p));
+          return {};
+        case 'review':
+          this.sys(await startReview(this.threadCtx(), p));
+          return {};
         case 'help':
           this.sys(
             COMMANDS.map((c) => `${c.usage.padEnd(30)} ${c.desc}`).join('\n') +
@@ -555,6 +576,69 @@ export class Engine {
       return { keepDraft: true };
     }
     return {};
+  }
+
+  // ───────────────────────── private conversations (follow-ups and reviews)
+
+  private threadCtx(): ThreadCtx {
+    const team = this.s.team;
+    const me = this.s.me;
+    if (!team || !me) throw new BackendError('unavailable', 'Not connected to a team yet.');
+    return { backend: this.d.backend, teamId: team.id, me, members: this.s.members, tasks: this.s.tasks };
+  }
+
+  /** Conversations with something new for me. */
+  unreadThreads(): Thread[] {
+    const me = this.s.me;
+    return me ? unreadThreads(this.s.threads, me.uid, this.d.store.settings().threadsSeen) : [];
+  }
+
+  /** Call when a conversation is opened or read, so it stops counting as new. */
+  markThreadSeen(threadId: string): void {
+    const t = this.s.threads.find((x) => x.id === threadId);
+    if (!t) return;
+    const seen = { ...this.d.store.settings().threadsSeen };
+    if ((seen[threadId] ?? 0) >= t.updatedAt) return;
+    seen[threadId] = t.updatedAt;
+    const keep = Object.entries(seen).sort((a, b) => b[1] - a[1]).slice(0, 300);
+    this.d.store.saveSettings({ threadsSeen: Object.fromEntries(keep) });
+    this.emit({});
+  }
+
+  async reply(threadId: string, text: string, verdict?: Verdict): Promise<string | null> {
+    const team = this.s.team;
+    if (!team) return 'Not connected to a team yet.';
+    try {
+      await this.d.backend.postMessage(team.id, threadId, { text, verdict });
+      return null;
+    } catch (e) {
+      return e instanceof BackendError ? e.message : 'Could not send that. Try again.';
+    }
+  }
+
+  async setThreadStatus(threadId: string, status: ThreadStatus): Promise<string | null> {
+    const team = this.s.team;
+    if (!team) return 'Not connected to a team yet.';
+    try {
+      await this.d.backend.setThreadStatus(team.id, threadId, status);
+      return null;
+    } catch (e) {
+      return e instanceof BackendError ? e.message : 'Could not change that. Try again.';
+    }
+  }
+
+  subscribeThreadMessages(threadId: string, cb: (m: ThreadMessage[]) => void): () => void {
+    const team = this.s.team;
+    return team ? this.d.backend.subscribeMessages(team.id, threadId, cb) : () => {};
+  }
+
+  /** Start a follow-up about a task from the task view. Returns an error message, or null when it was sent. */
+  async followUpOnTask(taskNum: number, text: string, recipients: string[] = []): Promise<string> {
+    try {
+      return await startFollowup(this.threadCtx(), { taskNum, recipients, text });
+    } catch (e) {
+      return e instanceof BackendError ? e.message : 'Could not send that. Try again.';
+    }
   }
 
   /** Returns true when an answer was shown. */

@@ -15,6 +15,8 @@ export interface Settings {
   allowUntil: Record<string, Record<string, number>>;
   /** Per team: server time of the newest answer to my questions already shown in a chat. */
   answersSeenAt: Record<string, number>;
+  /** Thread id -> time of the latest activity I have looked at. Kept to the newest few hundred. */
+  threadsSeen: Record<string, number>;
 }
 
 /** How long "Always allow" lasts before the owner is asked again. */
@@ -26,7 +28,7 @@ export interface Identity {
   password: string;
 }
 
-export type EntryKind = 'you' | 'agent' | 'broadcast' | 'task' | 'system' | 'question';
+export type EntryKind = 'you' | 'agent' | 'broadcast' | 'task' | 'thread' | 'system' | 'question';
 
 export interface Entry {
   id: string;
@@ -61,7 +63,7 @@ export interface SessionSummary {
   count: number;
 }
 
-const DEFAULTS: Settings = { displayName: '', teamId: '', teamName: '', agent: 'auto', allowUntil: {}, answersSeenAt: {} };
+const DEFAULTS: Settings = { displayName: '', teamId: '', teamName: '', agent: 'auto', allowUntil: {}, answersSeenAt: {}, threadsSeen: {} };
 
 function writeJson(path: string, data: unknown, mode?: number): void {
   const tmp = `${path}.${process.pid}.tmp`;
@@ -100,7 +102,7 @@ export class LocalStore {
   settings(): Settings {
     const raw = readJson<Partial<Settings> & { alwaysAllow?: Record<string, string[]> }>(join(this.dir, 'settings.json')) ?? {};
     const { alwaysAllow, ...rest } = raw;
-    const s: Settings = { ...DEFAULTS, ...rest, allowUntil: { ...(rest.allowUntil ?? {}) }, answersSeenAt: { ...(rest.answersSeenAt ?? {}) } };
+    const s: Settings = { ...DEFAULTS, ...rest, allowUntil: { ...(rest.allowUntil ?? {}) }, answersSeenAt: { ...(rest.answersSeenAt ?? {}) }, threadsSeen: { ...(rest.threadsSeen ?? {}) } };
     // Older versions kept "always allow" forever. Carry those over with the normal time limit.
     if (alwaysAllow) {
       const until = Date.now() + ALLOW_MS;

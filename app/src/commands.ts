@@ -11,6 +11,9 @@ export const COMMANDS: CommandInfo[] = [
   { name: 'task', usage: '/task @name… what to do', desc: 'assign work to one or more people' },
   { name: 'broadcast', usage: '/broadcast message', desc: 'message the whole team' },
   { name: 'tasks', usage: '/tasks', desc: 'open the task board' },
+  { name: 'followup', usage: '/followup T-4 [@name] question', desc: 'ask about a task, privately' },
+  { name: 'review', usage: '/review <link> @name comments', desc: 'share a pull request for review' },
+  { name: 'threads', usage: '/threads', desc: 'your private conversations' },
   { name: 'team', usage: '/team [invite|leave]', desc: 'people, invites, leaving' },
   { name: 'agent', usage: '/agent [codex|claude|auto]', desc: 'switch your coding agent' },
   { name: 'new', usage: '/new', desc: 'start a new chat' },
@@ -23,6 +26,9 @@ export type Parsed =
   | { kind: 'task'; assignees: string[]; text: string }
   | { kind: 'broadcast'; text: string }
   | { kind: 'tasks' }
+  | { kind: 'followup'; taskNum: number; recipients: string[]; text: string }
+  | { kind: 'review'; url: string; reviewers: string[]; text: string }
+  | { kind: 'threads' }
   | { kind: 'team'; sub?: string; target?: string }
   | { kind: 'agent'; name?: string }
   | { kind: 'new' | 'help' | 'quit' }
@@ -72,6 +78,28 @@ export function parseInput(raw: string): Parsed {
       return { kind: 'broadcast', text: rest };
     case 'tasks':
       return { kind: 'tasks' };
+    case 'threads':
+    case 'inbox':
+      return { kind: 'threads' };
+    case 'followup': {
+      const m = /^#?(?:T-?)?(\d+)\s+([\s\S]*)$/i.exec(rest);
+      if (!m) return { kind: 'error', message: 'Say which task: /followup T-4 @name your question.' };
+      const body = m[2]!.trim();
+      const lead = /^((?:@[\w.-]+\s+)+)([\s\S]*)$/.exec(body);
+      const recipients = lead ? [...lead[1]!.matchAll(MENTION)].map((x) => x[1]!.toLowerCase()) : [];
+      const text = (lead ? lead[2]! : body).trim();
+      if (!text) return { kind: 'error', message: 'Add your question after the task number.' };
+      return { kind: 'followup', taskNum: Number(m[1]), recipients: [...new Set(recipients)], text };
+    }
+    case 'review': {
+      const m = /^(\S+)\s*([\s\S]*)$/.exec(rest);
+      if (!m) return { kind: 'error', message: 'Paste the pull request link: /review https://... @name your comments' };
+      const body = m[2]!.trim();
+      const lead = /^((?:@[\w.-]+\s*)+)([\s\S]*)$/.exec(body);
+      const reviewers = lead ? [...lead[1]!.matchAll(MENTION)].map((x) => x[1]!.toLowerCase()) : [];
+      if (reviewers.length === 0) return { kind: 'error', message: 'Say who should review it: /review <link> @name your comments (or @team).' };
+      return { kind: 'review', url: m[1]!, reviewers: [...new Set(reviewers)], text: (lead ? lead[2]! : '').trim() };
+    }
     case 'team': {
       const [sub, ...more] = rest.split(/\s+/).filter(Boolean);
       const target = more.join(' ').replace(/^@/, '') || undefined;

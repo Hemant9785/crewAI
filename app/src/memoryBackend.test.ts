@@ -1,3 +1,4 @@
+import { runThreadContract } from './testing/threadContract.js';
 import { runContract } from './testing/contract.js';
 import { MemoryStore } from './memoryBackend.js';
 
@@ -11,4 +12,10 @@ runContract('memory', () => {
       clock.t += ms;
     },
   };
+});
+
+runThreadContract('memory', () => {
+  const store = new MemoryStore();
+  let n = 0;
+  return { user: async () => store.backendFor(`t${++n}`) };
 });

@@ -44,6 +44,7 @@ Inside the chat: /read  /task  /broadcast  /tasks  /team  /agent  /new  /help
 
 async function main(): Promise<number> {
   const args = process.argv.slice(2);
+  cleanupAfterUpdate(); // remove the previous program left behind by an update, whatever was asked for
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write(HELP);
     return 0;
@@ -58,7 +59,6 @@ async function main(): Promise<number> {
     return 0;
   }
 
-  cleanupAfterUpdate();
   const first = args[0];
   if (args.includes('--update') || first === 'update') {
     const result = await runUpdate({

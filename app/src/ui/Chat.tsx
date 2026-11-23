@@ -10,6 +10,7 @@ import { Composer } from './Composer.js';
 import { buildFeed } from './feed.js';
 import { ConversationPanel, Panel, TasksPanel, TeamPanel } from './Panels.js';
 import { TaskView } from './TaskView.js';
+import { ThreadsView } from './ThreadsView.js';
 import { FILTERS, buildRows, counts, indexOfTask, taskRows, type TaskFilter } from './tasklist.js';
 import { layoutMode, useTerminalSize } from './useTerminal.js';
 import { shortPath, useEngine } from './useEngine.js';
@@ -26,7 +27,8 @@ export function Chat({
   const wide = mode === 'wide';
 
   const [history, setHistory] = useState<string[]>([]);
-  const [view, setView] = useState<'chat' | 'tasks'>('chat');
+  const [view, setView] = useState<'chat' | 'tasks' | 'threads'>('chat');
+  const [threadsFor, setThreadsFor] = useState<{ taskId?: string; id?: string }>({});
   const [focus, setFocus] = useState<'composer' | 'tasks'>('composer');
   const [filter, setFilter] = useState<TaskFilter>('mine');
   const [showDone, setShowDone] = useState(false);
@@ -124,7 +126,10 @@ export function Chat({
       if (out.keepDraft) setRestore((r) => ({ text, n: (r?.n ?? 0) + 1 }));
       if (out.action === 'quit') onQuit();
       else if (out.action === 'new') onNew();
-      else if (out.action === 'tasks') {
+      else if (out.action === 'threads') {
+        setThreadsFor({});
+        setView('threads');
+      } else if (out.action === 'tasks') {
         if (wide) setFocus('tasks');
         else setView('tasks');
       }
@@ -132,11 +137,36 @@ export function Chat({
     [engine, onQuit, onNew, wide],
   );
 
+  if (view === 'threads') {
+    return (
+      <ThreadsView
+        engine={engine}
+        threads={s.threads}
+        meUid={s.me?.uid ?? ''}
+        size={size}
+        narrow={mode === 'narrow'}
+        team={s.team?.name ?? ''}
+        folder={folder}
+        taskId={threadsFor.taskId}
+        initialId={threadsFor.id}
+        onClose={() => {
+          setView('chat');
+          setFocus('composer');
+        }}
+      />
+    );
+  }
+
   if (view === 'tasks') {
     return (
       <TaskView
         engine={engine}
         tasks={s.tasks}
+        threads={s.threads}
+        onOpenThreads={(taskId) => {
+          setThreadsFor({ taskId });
+          setView('threads');
+        }}
         meUid={s.me?.uid ?? ''}
         size={size}
         narrow={mode === 'narrow'}
@@ -152,6 +182,7 @@ export function Chat({
   }
 
   const folderName = basename(folder);
+  const unread = engine.unreadThreads().length;
   const c = counts(s.tasks, s.me?.uid ?? '');
   const cardEls = cards.map((a, i) => (
     <AttentionCard
@@ -182,6 +213,7 @@ export function Chat({
           <Text dimColor>  {s.team?.name}{mode === 'narrow' ? '' : ` · ${shortPath(folder)}`}</Text>
         </Text>
         <Box flexShrink={0} marginLeft={2}>
+          {unread > 0 ? <Text color="cyan">✉ {unread} new · /threads   </Text> : null}
           {s.agent ? (
             <Text color="magenta">agent: {s.agent}</Text>
           ) : (

@@ -9,7 +9,7 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 - [x] **5. Main application flow.** Chat UI: onboarding, resume picker, presence header, feed, composer with `/` menu and `@` picker, `/read` (local and teammate, offline reroute), consent card, `/task`, `/broadcast`, `/tasks` board, `/team`, `/agent`, plain-text local agent.
 - [x] **6. Supporting features and polish.** Saved history and resume, `--demo` mode, README with Firebase setup, rules deploy script, error messages.
 - [x] **7. Milestone verification.** Typecheck, unit/engine/UI tests, Firestore rules contract tests on the emulator, build, manual run on a real terminal.
-- [ ] **8. Ship crewai 0.3.2.** Test the self-updater, verify Windows replacement, document `--update` and `doctor`, bump the app version, push `main`, tag `crewai-v0.3.2`, and verify all five release assets plus a real 0.3.1-to-0.3.2 update.
+- [x] **8. Ship the updater and fixes.** (Shipped as 0.3.4: 0.3.2 and 0.3.3 built on most platforms but failed CI on a screen-test race, fixed by deciding Tab inside the message box.) A real 0.3.3 binary updated itself to the published 0.3.4 with checksum verification, then reported up to date. Original scope: Test the self-updater, verify Windows replacement, document `--update` and `doctor`, bump the app version, push `main`, tag `crewai-v0.3.2`, and verify all five release assets plus a real 0.3.1-to-0.3.2 update.
 
 Release progress (2026-11-23): Added updater coverage for rate-limit feed fallback, up-to-date and dry-run behavior, checksum rejection, and version validation before replacement. Verification passed: `npm.cmd exec -- vitest run` (124 tests), `npm.cmd exec -- tsc --noEmit`, and `npm.cmd run build`. A disposable Windows 0.3.1 executable updated itself from local 0.3.2 release assets, verified the checksum/version, replaced the running image, reported 0.3.2, and removed `.old` on the next start. README documents update and doctor; package and lockfile are 0.3.2. The changes are in local commit `e8f7ddf`.
 
@@ -58,3 +58,13 @@ Blocked release actions: `git push origin main` was rejected by automatic approv
 - Invite codes can be brute-forced by automated clients; add App Check or a rate-limited function before launch.
 - Remote answers are not OS-sandboxed; the approval card says "Limited protection".
 - Firebase's operator can read questions, answers, tasks and messages.
+
+## Task discussions and pull request reviews (2026-11-23, in progress)
+
+Owner request: the task area was too static (start/done only). Wanted: ask a follow-up about a task that only the person asked can see, and paste a pull request link with comments so chosen teammates can review it, built to market-ready quality.
+
+- [x] **9. Data layer.** Private `threads` (follow-up or review) with `messages`, participants-only access in Firestore rules, an index for the thread list, a PR link validator (`pr.ts`, https only), in-memory and Firebase backends. 11 shared contract tests run against both the in-memory service and the real rules on the emulator (27 emulator tests pass).
+- [x] **10. Engine and commands.** `/followup`, `/review` (`@team` supported), `/threads`; notifications in the chat feed for new questions, replies, approvals and change requests; per-conversation unread tracking; helpers for the screens. 10 engine and parser tests.
+- [x] **11. Screens.** Threads view (list, messages, reply box, review verdict picker, open-link and close keys), unread badge in the header, "ask a follow-up" and a follow-up count in the task view. 6 screen tests. 150 tests pass.
+- [ ] **12. Deploy and release.** The new rules and index must be deployed to the Firebase project before a release (`npx firebase deploy --only firestore`), then release as 0.4.0. Not done: not seen yet in a real terminal, no macOS/Linux check, and `ctrl+o` (open in browser) is covered only by a unit test of the link check.
+- Not built: attaching more reviewers to an existing review, editing or deleting messages, notifications while crewai is closed, fetching PR details from GitHub (links are never opened or fetched by crewai itself).

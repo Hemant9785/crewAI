@@ -4,6 +4,7 @@ import { afterAll, describe, expect, it } from 'vitest';
 import type { Backend, BackendError } from './backend.js';
 import { FirebaseBackend } from './firebaseBackend.js';
 import { runContract } from './testing/contract.js';
+import { runThreadContract } from './testing/threadContract.js';
 
 // Runs the shared backend contract against the real Firestore rules in the emulator.
 // Start with: npm run emulators
@@ -12,7 +13,7 @@ afterAll(async () => {
   await Promise.all(opened.map((b) => b.close()));
 });
 
-runContract('firebase emulator', () => ({
+const emulatorHarness = () => ({
   user: async () => {
     const b = await FirebaseBackend.connect(
       {
@@ -28,7 +29,10 @@ runContract('firebase emulator', () => ({
     opened.push(b);
     return b;
   },
-}));
+});
+
+runContract('firebase emulator', emulatorHarness);
+runThreadContract('firebase emulator', emulatorHarness);
 
 // Rules that only Firestore enforces (the in-memory service has no raw document access).
 describe('firestore rules: invites, names and server times', () => {

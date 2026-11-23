@@ -12,7 +12,14 @@ import {
   type Task,
   type TaskStatus,
   type Team,
+  type Thread,
+  type ThreadKind,
+  type ThreadMessage,
+  type ThreadStatus,
+  type Verdict,
+  THREAD_LIMITS,
 } from './types.js';
+import { parsePrUrl } from './pr.js';
 
 interface TeamRow extends Team {
   taskSeq: number;
@@ -35,6 +42,8 @@ export class MemoryStore {
   broadcasts = new Map<string, Broadcast[]>();
   tasks = new Map<string, Task[]>();
   requests = new Map<string, ReadRequest[]>();
+  threads = new Map<string, Thread[]>();
+  threadMessages = new Map<string, ThreadMessage[]>();
   private listeners = new Set<() => void>();
 
   constructor(public now: () => number = Date.now) {}
@@ -328,6 +337,119 @@ class MemoryBackend implements Backend {
         (this.s.requests.get(teamId) ?? []).filter(
           (r) => r.askerUid === this.uid || r.targetUid === this.uid || r.movedFrom.includes(this.uid),
         ),
+      cb,
+    );
+  }
+
+  // ───────────────────────── threads
+
+  private thread(teamId: string, id: string): Thread {
+    this.requireMember(teamId);
+    const t = (this.s.threads.get(teamId) ?? []).find((x) => x.id === id);
+    // A thread you are not in looks exactly like one that does not exist.
+    if (!t || !t.participants.includes(this.uid)) throw new BackendError('permission-denied', "You aren't part of that conversation.");
+    return t;
+  }
+
+  async createThread(
+    teamId: string,
+    input: { kind: ThreadKind; taskId?: string; title: string; prUrl?: string; participants: { uid: string; name: string }[]; text: string },
+  ): Promise<Thread> {
+    const me = this.requireMember(teamId);
+    if (input.kind !== 'followup' && input.kind !== 'review') throw new BackendError('invalid', 'Unknown kind of conversation.');
+    const title = bounded(input.title, THREAD_LIMITS.title, 'Title');
+    const text = bounded(input.text, LIMITS.text, 'Message');
+    let prUrl = '';
+    if (input.kind === 'review') {
+      const pr = parsePrUrl(input.prUrl ?? '');
+      if (!pr.ok) throw new BackendError('invalid', pr.error);
+      prUrl = pr.url;
+    } else if (input.prUrl) {
+      throw new BackendError('invalid', 'Only a review has a pull request link.');
+    }
+    let taskId = '';
+    let taskNum = 0;
+    if (input.taskId) {
+      const t = (this.s.tasks.get(teamId) ?? []).find((x) => x.id === input.taskId);
+      if (!t) throw new BackendError('not-found', 'That task was not found.');
+      taskId = t.id;
+      taskNum = t.num;
+    }
+    const others = [...new Set(input.participants.map((p) => p.uid))].filter((u) => u !== this.uid);
+    if (others.length === 0) throw new BackendError('invalid', 'Choose at least one other person.');
+    if (others.length + 1 > THREAD_LIMITS.participants) {
+      throw new BackendError('invalid', `That is too many people (at most ${THREAD_LIMITS.participants}).`);
+    }
+    const names: string[] = [me.name];
+    for (const uid of others) {
+      const m = this.member(teamId, uid);
+      if (!m) throw new BackendError('invalid', 'Everyone in a conversation must be in this team.');
+      names.push(m.name);
+    }
+    const now = this.s.now();
+    const thread: Thread = {
+      id: randomUUID(), kind: input.kind, taskId, taskNum, title, prUrl,
+      createdByUid: this.uid, createdByName: me.name,
+      participants: [this.uid, ...others], participantNames: names, status: 'open',
+      lastText: text.slice(0, THREAD_LIMITS.preview), lastFromUid: this.uid, lastFromName: me.name, lastVerdict: '',
+      createdAt: now, updatedAt: now,
+    };
+    const list = this.s.threads.get(teamId) ?? [];
+    list.push(thread);
+    this.s.threads.set(teamId, list);
+    this.s.threadMessages.set(thread.id, [{ id: randomUUID(), fromUid: this.uid, fromName: me.name, text, verdict: '', createdAt: now }]);
+    this.s.changed();
+    return structuredClone(thread);
+  }
+
+  async postMessage(teamId: string, threadId: string, input: { text: string; verdict?: Verdict }): Promise<void> {
+    const me = this.requireMember(teamId);
+    const t = this.thread(teamId, threadId);
+    if (t.status !== 'open') throw new BackendError('conflict', 'This conversation is closed.');
+    const text = bounded(input.text, LIMITS.text, 'Message');
+    const verdict = input.verdict ?? '';
+    if (!['', 'approved', 'changes', 'comment'].includes(verdict)) throw new BackendError('invalid', 'Unknown verdict.');
+    if (verdict !== '' && (t.kind !== 'review' || t.createdByUid === this.uid)) {
+      throw new BackendError('invalid', 'Only a reviewer can approve or ask for changes.');
+    }
+    const now = this.s.now();
+    this.s.threadMessages.get(t.id)!.push({ id: randomUUID(), fromUid: this.uid, fromName: me.name, text, verdict, createdAt: now });
+    t.lastText = text.slice(0, THREAD_LIMITS.preview);
+    t.lastFromUid = this.uid;
+    t.lastFromName = me.name;
+    t.lastVerdict = verdict;
+    t.updatedAt = now;
+    this.s.changed();
+  }
+
+  async setThreadStatus(teamId: string, threadId: string, status: ThreadStatus): Promise<void> {
+    const t = this.thread(teamId, threadId);
+    if (t.createdByUid !== this.uid) throw new BackendError('permission-denied', 'Only the person who started this can close it.');
+    if (status !== 'open' && status !== 'closed') throw new BackendError('invalid', 'Unknown status.');
+    t.status = status;
+    this.s.changed();
+  }
+
+  subscribeThreads(teamId: string, cb: (t: Thread[]) => void): Unsubscribe {
+    return this.sub(
+      teamId,
+      () =>
+        (this.s.threads.get(teamId) ?? [])
+          .filter((t) => t.participants.includes(this.uid))
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .slice(0, 100),
+      cb,
+    );
+  }
+
+  subscribeMessages(teamId: string, threadId: string, cb: (m: ThreadMessage[]) => void): Unsubscribe {
+    return this.sub(
+      teamId,
+      () => {
+        const t = (this.s.threads.get(teamId) ?? []).find((x) => x.id === threadId);
+        if (!t || !t.participants.includes(this.uid)) return [];
+        return (this.s.threadMessages.get(threadId) ?? []).slice(-THREAD_LIMITS.messages);
+      },
       cb,
     );
   }
