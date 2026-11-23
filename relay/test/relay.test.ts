@@ -425,3 +425,41 @@ describe("approved device access",()=>{
     expect(tampered.status).toBe(403);
   });
 });
+
+describe('recipient-scoped direct messages',()=>{
+  it('delivers only to participants and rejects forgery, tampering, and revocation',async()=>{
+    const team='team-direct-test', owner=await testIdentity(), bob=await testIdentity(), charlie=await testIdentity();
+    expect((await upload(team,[await signedEnvelope(team,'team.created','dm-team-created',undefined,owner)])).status).toBe(200);
+    for(const [member,key] of [['bob',bob],['charlie',charlie]] as const){
+      expect((await upload(team,[await signedEnvelope(team,'member.added',`dm-member-${member}`,{member_id:member,active:true},owner)])).status).toBe(200);
+      expect((await upload(team,[await signedEnvelope(team,'device.added',`dm-device-${member}`,{member_id:member,device_id:key.deviceId,public_key:key.publicKeyBase64,active:true},owner)])).status).toBe(200);
+    }
+    const target=`/v1/teams/${team}/direct-messages`;
+    const msg={message_id:'dm-one',team_id:team,sender_member_id:'member-test',sender_device_id:owner.deviceId,recipient_member_id:'bob',reply_to:null,body:'private example',created_at:10,signature:''};
+    const signed=encoder.encode(stableJson(['team-assistant/direct-message/v1',msg.message_id,msg.team_id,msg.sender_member_id,msg.sender_device_id,msg.recipient_member_id,msg.reply_to,msg.body,msg.created_at]));
+    msg.signature=toBase64(new Uint8Array(await crypto.subtle.sign('Ed25519',owner.privateKey,asArrayBuffer(signed))));
+    const post=async (identity:TestIdentity,value:unknown) => {const body=JSON.stringify(value);return exports.default.fetch!(new Request(`https://relay.test${target}`,{method:'POST',headers:{authorization:AUTHORIZATION,'content-type':'application/json',...await proof(team,identity,'POST',target,body)},body}));};
+    const read=async (identity:TestIdentity) => {const path=`${target}?after=0&limit=16`;return exports.default.fetch!(new Request(`https://relay.test${path}`,{headers:{authorization:AUTHORIZATION,...await proof(team,identity,'GET',path,'')}}));};
+    expect((await post(owner,msg)).status).toBe(201);
+    expect((await post(owner,msg)).status).toBe(200);
+    const bobPage=await (await read(bob)).json() as {messages:Array<{message:{body:string}}>};
+    expect(bobPage.messages.map(item=>item.message.body)).toEqual(['private example']);
+    const outsider=await (await read(charlie)).json() as {messages:unknown[]};
+    expect(outsider.messages).toEqual([]);
+    expect((await post(charlie,msg)).status).toBe(403);
+    expect((await post(owner,{...msg,body:'tampered'})).status).toBe(401);
+    expect((await post(owner,{...msg,team_id:'another-team'})).status).toBe(400);
+    const conflict={...msg,body:'different signed content'};
+    const conflictBytes=encoder.encode(stableJson(['team-assistant/direct-message/v1',conflict.message_id,conflict.team_id,conflict.sender_member_id,conflict.sender_device_id,conflict.recipient_member_id,conflict.reply_to,conflict.body,conflict.created_at]));
+    conflict.signature=toBase64(new Uint8Array(await crypto.subtle.sign('Ed25519',owner.privateKey,asArrayBuffer(conflictBytes))));
+    expect((await post(owner,conflict)).status).toBe(409);
+    const replayPath=`${target}?after=0&limit=16`;
+    const replayHeaders={authorization:AUTHORIZATION,...await proof(team,bob,'GET',replayPath,'')};
+    expect((await exports.default.fetch!(new Request(`https://relay.test${replayPath}`,{headers:replayHeaders}))).status).toBe(200);
+    expect((await exports.default.fetch!(new Request(`https://relay.test${replayPath}`,{headers:replayHeaders}))).status).toBe(403);
+    const unsigned=await exports.default.fetch!(new Request(`https://relay.test${target}?after=0&limit=16`,{headers:{authorization:AUTHORIZATION}}));
+    expect(unsigned.status).toBe(403);
+    expect((await upload(team,[await signedEnvelope(team,'member.added','dm-revoke-bob',{member_id:'bob',active:false},owner)])).status).toBe(200);
+    expect((await read(bob)).status).toBe(403);
+  });
+});

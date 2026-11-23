@@ -62,6 +62,13 @@ mod sound;
 mod sync;
 mod team;
 mod team_session;
+mod crewai_command;
+mod crewai_composer;
+mod crewai_conversation;
+mod crewai_terminal;
+mod crewai_message;
+mod crewai_onboarding;
+mod crewai_service;
 mod team_storage;
 mod team_view;
 mod terminal;
@@ -534,6 +541,9 @@ fn main() -> io::Result<()> {
     }
     if let Some(outcome) = cli::maybe_run_machine(&raw_args) {
         return finish_cli(outcome);
+    }
+    if raw_args.get(1).map(String::as_str) == Some("crewai") {
+        return crewai_terminal::run();
     }
     let args = match session::configure_from_args(&raw_args) {
         Ok(args) => args,

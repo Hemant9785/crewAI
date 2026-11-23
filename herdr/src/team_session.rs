@@ -290,6 +290,11 @@ fn context_database(base: &Path, key: &str) -> PathBuf {
     contexts_root(base).join(key).join("team.sqlite")
 }
 
+/// Reserve a new context name without replacing an existing team's database.
+pub(crate) fn new_team_database(base: &Path) -> PathBuf {
+    context_database(base, &digest(&crate::cli::team::generate_token()))
+}
+
 fn contained_context(base: &Path, path: &Path) -> bool {
     match (contexts_root(base).canonicalize(), path.canonicalize()) {
         (Ok(root), Ok(path)) => path.starts_with(root),

@@ -1,4 +1,5 @@
 import { ACCESS_SCHEMA, refreshAccess, authorizeAccess, forwardAccess, approvedDevice } from "./access";
+import { DIRECT_SCHEMA, putDirect, getDirect } from "./direct-messages";
 import { DurableObject } from "cloudflare:workers";
 import { JOIN_INBOX_SCHEMA, joinInbox } from "./join-inbox";
 import {
@@ -159,6 +160,22 @@ export default {
         },
         body: JSON.stringify(decoded),
       });
+    } else if (parts[3] === "direct-messages" && request.method === "POST") {
+      const body = await readBoundedBody(request, 64 * 1024);
+      if (body === null) return json({error:"request_too_large"},413);
+      forwarded = new Request("https://relay.internal/v1/direct-messages", {
+        method:"POST",
+        headers:{...(await forwardAccess(request,url.pathname+url.search,body)),"content-type":"application/json","x-team-id":teamId,"x-team-token-hash":tokenHash},
+        body:asArrayBuffer(body),
+      });
+    } else if (parts[3] === "direct-messages" && request.method === "GET") {
+      const paging=validatePaging(url.searchParams.get("after"),url.searchParams.get("limit"));
+      if (!paging) return json({error:"invalid_cursor"},400);
+      forwarded=new Request(`https://relay.internal/v1/direct-messages?after=${paging.after}&limit=${paging.limit}`,{
+        method:"GET",headers:{...(await forwardAccess(request,url.pathname+url.search,new Uint8Array())),"x-team-id":teamId,"x-team-token-hash":tokenHash}
+      });
+    } else if (parts[3] === "direct-messages") {
+      return json({error:"method_not_allowed"},405,{allow:"GET, POST"});
     } else if (parts[3] === "events" && request.method === "POST") {
       const body = await readBoundedBody(request, MAX_REQUEST_BYTES);
       if (body === null) return json({ error: "request_too_large" }, 413);
@@ -214,6 +231,7 @@ export class TeamRelay extends DurableObject<Env> {
     ctx.blockConcurrencyWhile(async () => {
       ctx.storage.sql.exec(JOIN_INBOX_SCHEMA);
       ctx.storage.sql.exec(ACCESS_SCHEMA);
+      ctx.storage.sql.exec(DIRECT_SCHEMA);
       ctx.storage.sql.exec(`
         CREATE TABLE IF NOT EXISTS relay_team (
           team_id TEXT PRIMARY KEY,
@@ -239,7 +257,7 @@ export class TeamRelay extends DurableObject<Env> {
   async fetch(request: Request): Promise<Response> {
     // Signature verification is asynchronous. Serialize event access with registry
     // refresh and append so a concurrent revocation cannot race an approved read.
-    if (new URL(request.url).pathname === "/v1/events") {
+    if (["/v1/events", "/v1/direct-messages"].includes(new URL(request.url).pathname)) {
       return this.ctx.blockConcurrencyWhile(() => this.handleRequest(request));
     }
     return this.handleRequest(request);
@@ -252,6 +270,29 @@ export class TeamRelay extends DurableObject<Env> {
       return json({ error: "invalid_relay_request" }, 400);
     }
     const url = new URL(request.url);
+    if (url.pathname === "/v1/direct-messages") {
+      const team=this.ctx.storage.sql.exec<StoredTeamRow>("SELECT * FROM relay_team WHERE team_id=?",teamId).toArray()[0];
+      if (!team || !timingSafeEqualText(team.token_hash,tokenHash)) return json({error:"invalid_team_token"},401);
+      await refreshAccess(this.ctx.storage.sql,teamId,team);
+      const access=await authorizeAccess(this.ctx.storage.sql,request,teamId);
+      if (access) return json({error:access},403);
+      const device=request.headers.get("x-relay-device")??"";
+      if (request.method === "GET") {
+        const paging=validatePaging(url.searchParams.get("after"),url.searchParams.get("limit"));
+        if(!paging) return json({error:"invalid_cursor"},400);
+        const result=getDirect(this.ctx.storage.sql,device,paging.after,paging.limit);
+        return json(result.body,result.status);
+      }
+      if (request.method === "POST") {
+        const body=await readBoundedBody(request,32*1024);
+        if(body===null) return json({error:"request_too_large"},413);
+        let value:unknown;
+        try {value=JSON.parse(new TextDecoder().decode(body));} catch {return json({error:"malformed_json"},400);}
+        const result=await putDirect(this.ctx.storage.sql,teamId,device,value);
+        return json(result.body,result.status);
+      }
+      return json({error:"method_not_allowed"},405,{allow:"GET, POST"});
+    }
     if (request.method === "POST" && url.pathname === "/v1/join-requests") {
       const team = this.ctx.storage.sql.exec<StoredTeamRow>("SELECT * FROM relay_team WHERE team_id = ?", teamId).toArray()[0];
       if (!team || !timingSafeEqualText(team.token_hash, tokenHash)) return json({ error: "invalid_team_token" }, 401);

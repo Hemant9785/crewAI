@@ -2094,7 +2094,18 @@ fn resolve_shell_for_login_mode(shell: &str) -> io::Result<String> {
 /// The original prompt must be invoked before any other statement in the
 /// wrapper: anything that runs first resets `$?`, so a status-aware user
 /// prompt would show success after a failed command (verified on 5.1).
-pub(crate) const WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND: &str = r"if ($null -eq $global:__HerdrOriginalPrompt) { $global:__HerdrOriginalPrompt = $function:prompt; function global:prompt { $out = @(& $global:__HerdrOriginalPrompt) -join ' '; $loc = $ExecutionContext.SessionState.Path.CurrentLocation; if ($loc.Provider.Name -eq 'FileSystem') { try { [Environment]::CurrentDirectory = $loc.ProviderPath } catch {}; $esc = [string][char]27; $out += $esc + ']9;9;' + $loc.ProviderPath + $esc + '\' }; $out } }";
+pub(crate) const WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND: &str = r"if ($null -eq $global:__HerdrOriginalPrompt) { $global:__HerdrOriginalPrompt = $function:prompt; function global:prompt { $out = @(& $global:__HerdrOriginalPrompt) -join ' '; $loc = $ExecutionContext.SessionState.Path.CurrentLocation; if ($loc.Provider.Name -eq 'FileSystem') { try { [Environment]::CurrentDirectory = $loc.ProviderPath } catch {}; $esc = [string][char]27; $out += $esc + ']9;9;' + $loc.ProviderPath + $esc + '\' }; $out } }; function global:/crewai { & $env:HERDR_CREWAI_EXECUTABLE crewai }";
+
+#[cfg(unix)]
+fn crewai_bash_rc() -> io::Result<std::path::PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let path = std::env::temp_dir().join(format!("herdr-crewai-{}-{}.bash", std::process::id(), NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+    let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(&path)?;
+    file.write_all(b"if [ -f \"$HOME/.bashrc\" ]; then . \"$HOME/.bashrc\"; fi\nfunction /crewai { \"$HERDR_CREWAI_EXECUTABLE\" crewai; }\n")?;
+    Ok(path)
+}
 
 /// Login flags appended when launching POSIX-style shells on Windows.
 ///
@@ -2142,11 +2153,21 @@ fn pane_shell_command_builder_for_target(
         cmd.args(windows_login_shell_args(&shell));
     }
     if uses_windows_powershell_pane_shell_for_target(shell_config, target) {
+        if let Ok(executable) = std::env::current_exe() { cmd.env("HERDR_CREWAI_EXECUTABLE", executable); }
         cmd.args([
             "-NoExit",
             "-Command",
             WINDOWS_POWERSHELL_SHELL_INTEGRATION_COMMAND,
         ]);
+    }
+    #[cfg(unix)]
+    if target != ShellLaunchTarget::Windows
+        && !shell_mode_uses_login_shell(shell_config.mode, target)
+        && std::path::Path::new(&shell).file_name().is_some_and(|name| name == "bash")
+    {
+        if let Ok(executable) = std::env::current_exe() { cmd.env("HERDR_CREWAI_EXECUTABLE", executable); }
+        cmd.arg("--rcfile");
+        cmd.arg(crewai_bash_rc()?);
     }
     Ok(cmd)
 }

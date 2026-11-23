@@ -4,7 +4,22 @@ crewAI is a terminal-first team coding assistant built on top of Herdr. It
 combines local team coordination, signed task and broadcast records,
 permission-aware repository requests, and bounded agent execution.
 
-> Status: this repository contains a runnable Internet collaboration prototype. The Cloudflare relay is deployed and its health endpoint responds; a physical two-laptop Internet run has not yet been performed. Team sync runs in the background while Herdr is open; manual sync remains available.
+> Status: Internet collaboration is a prototype. The conversational interface is under active development; verify the complete Windows-to-EC2 flow with the release before relying on it.
+
+## Conversational team workspace
+
+Start `herdr`, then enter `/crewai` in a supported shell pane. You can also run
+`herdr crewai` directly. Create a team as manager or join with an invitation;
+the manager approves new members. Use `/team-mates` to manage the team and
+connect a local project, then try `/task`, `/broadcast`, `/message @name ...`,
+and `/read ... @name`. The interface guides you through missing details.
+
+Project questions require the project owner's consent. The Codex process is
+not protected by an operating-system read-only boundary: it may access files
+and the network, as the confirmation screen explains. Repository files remain
+on their owner's device; bounded results are shared. The relay operator can
+see private-message content. Some workflows and cross-platform behavior still
+need end-to-end testing; see [task.md](task.md) for the remaining checklist.
 
 For the team setup, invitation, relay deployment, `/task`, `/brodcast`, and
 `/read` walkthrough, see [Internet team prototype](docs/internet-team.md).
@@ -29,7 +44,7 @@ herdr
 For Windows, run this in PowerShell:
 
 ```powershell
-irm https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-team-herdr.ps1 | iex
+Invoke-Expression ((Invoke-WebRequest -UseBasicParsing 'https://raw.githubusercontent.com/Hemant9785/crewAI/main/tools/install-team-herdr.ps1').Content)
 ```
 
 It installs the Windows binary and bundled ConPTY files under

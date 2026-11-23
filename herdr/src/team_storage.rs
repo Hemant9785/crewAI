@@ -5,6 +5,8 @@
 //! this module.
 
 mod task_events;
+mod direct_messages;
+mod conversation;
 mod membership_events;
 
 use crate::identity::DeviceIdentity;
@@ -24,7 +26,7 @@ use std::path::{Path, PathBuf};
 
 pub(crate) mod permission_events;
 
-pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 6;
+pub(crate) const CURRENT_SCHEMA_VERSION: i64 = 10;
 pub(crate) const MAX_OUTBOX_ATTEMPTS: u32 = 5;
 
 const MIGRATION_1: &str = r#"
@@ -185,6 +187,62 @@ CREATE TABLE relay_cursors (
     sequence INTEGER NOT NULL CHECK (sequence >= 0),
     updated_at INTEGER NOT NULL
 );
+"#;
+
+const MIGRATION_7: &str = r#"
+CREATE TABLE direct_messages (
+    message_id TEXT PRIMARY KEY,
+    team_id TEXT NOT NULL,
+    sender_member_id TEXT NOT NULL,
+    recipient_member_id TEXT NOT NULL,
+    reply_to TEXT,
+    envelope_json TEXT NOT NULL,
+    state TEXT NOT NULL CHECK(state IN ('queued','synced','received')),
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX direct_messages_team_created ON direct_messages(team_id, created_at, message_id);
+CREATE TABLE direct_message_cursors (
+    team_id TEXT NOT NULL,
+    member_id TEXT NOT NULL,
+    sequence INTEGER NOT NULL CHECK(sequence >= 0),
+    PRIMARY KEY(team_id, member_id)
+);
+"#;
+
+const MIGRATION_8: &str = r#"
+CREATE TABLE relay_known_events (
+    team_id TEXT NOT NULL,
+    endpoint TEXT NOT NULL,
+    event_id TEXT NOT NULL,
+    PRIMARY KEY(team_id, endpoint, event_id)
+);
+"#;
+
+const MIGRATION_9: &str = r#"
+CREATE TABLE conversation_entries (
+    team_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    entry_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    speaker_id TEXT,
+    recipient_id TEXT,
+    text TEXT NOT NULL,
+    status TEXT NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY(team_id, thread_id, entry_id)
+);
+CREATE INDEX conversation_history ON conversation_entries(team_id, thread_id, created_at, entry_id);
+CREATE TABLE conversation_drafts (
+    team_id TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    text TEXT NOT NULL,
+    PRIMARY KEY(team_id, thread_id)
+);
+"#;
+
+const MIGRATION_10: &str = r#"
+ALTER TABLE conversation_entries ADD COLUMN related_id TEXT;
 "#;
 
 #[derive(Debug)]
@@ -410,6 +468,24 @@ impl TeamStore {
              FROM team_members ORDER BY display_name, member_id",
         )?;
         let rows = statement.query_map([], |row| {
+            let role_json: String = row.get(2)?;
+            Ok(Member {
+                member_id: row.get(1)?,
+                display_name: row.get(0)?,
+                role: decode(&role_json).map_err(to_sql_error)?,
+                active: int_to_bool(row.get(3)?)?,
+            })
+        })?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
+    }
+
+    /// Scope recipient choices to the selected team. A database may contain
+    /// more than one team's historical records even though the UI selects one.
+    pub(crate) fn members_for_team(&self, team_id: &str) -> Result<Vec<Member>, StorageError> {
+        let mut statement = self.connection.prepare(
+            "SELECT display_name, member_id, role_json, active FROM team_members WHERE team_id = ?1 ORDER BY display_name, member_id",
+        )?;
+        let rows = statement.query_map(params![team_id], |row| {
             let role_json: String = row.get(2)?;
             Ok(Member {
                 member_id: row.get(1)?,
@@ -1095,6 +1171,32 @@ impl TeamStore {
         Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
+    /// Only cache events the relay acknowledged or returned; failures remain eligible for retry.
+    pub(crate) fn relay_knows_event(
+        &self,
+        team_id: &str,
+        endpoint: &str,
+        event_id: &str,
+    ) -> Result<bool, StorageError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM relay_known_events WHERE team_id=?1 AND endpoint=?2 AND event_id=?3)",
+            params![team_id, endpoint, event_id], |row| row.get(0),
+        )?)
+    }
+
+    pub(crate) fn remember_relay_event(
+        &self,
+        team_id: &str,
+        endpoint: &str,
+        event_id: &str,
+    ) -> Result<(), StorageError> {
+        self.connection.execute(
+            "INSERT OR IGNORE INTO relay_known_events(team_id,endpoint,event_id) SELECT team_id,?2,event_id FROM event_log WHERE team_id=?1 AND event_id=?3",
+            params![team_id, endpoint, event_id],
+        )?;
+        Ok(())
+    }
+
     pub(crate) fn device_public_key(
         &self,
         device_id: &str,
@@ -1539,6 +1641,18 @@ impl TeamStore {
         }
         if starting_version < 6 {
             transaction.execute_batch(MIGRATION_6)?;
+        }
+        if starting_version < 7 {
+            transaction.execute_batch(MIGRATION_7)?;
+        }
+        if starting_version < 8 {
+            transaction.execute_batch(MIGRATION_8)?;
+        }
+        if starting_version < 9 {
+            transaction.execute_batch(MIGRATION_9)?;
+        }
+        if starting_version < 10 {
+            transaction.execute_batch(MIGRATION_10)?;
         }
         transaction.execute(
             "INSERT INTO schema_version(version)
@@ -2011,6 +2125,24 @@ mod tests {
         }
         let reopened = TeamStore::open(&path).unwrap();
         assert_eq!(reopened.relay_cursor("team-1").unwrap(), 12);
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn relay_acknowledgements_migrate_without_losing_existing_data() {
+        let path = db_path("relay-ack-migration");
+        {
+            let store = TeamStore::open(&path).unwrap();
+            store.save_relay_cursor("team-1", 12, 100).unwrap();
+            store.connection.execute_batch("DROP TABLE conversation_entries; DROP TABLE conversation_drafts; DROP TABLE relay_known_events; UPDATE schema_version SET version=7;").unwrap();
+        }
+        let reopened = TeamStore::open(&path).unwrap();
+        assert_eq!(reopened.schema_version().unwrap(), CURRENT_SCHEMA_VERSION);
+        assert_eq!(reopened.relay_cursor("team-1").unwrap(), 12);
+        assert!(!reopened.relay_knows_event("team-1", "https://relay.example", "missing").unwrap());
+        reopened.remember_relay_event("team-1", "https://relay.example", "missing").unwrap();
+        assert!(!reopened.relay_knows_event("team-1", "https://relay.example", "missing").unwrap());
+        drop(reopened);
         let _ = fs::remove_file(path);
     }
 

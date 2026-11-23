@@ -106,6 +106,8 @@ struct Envelope<'a> {
 #[derive(Deserialize)]
 struct UploadResponse {
     cursor: u64,
+    accepted: usize,
+    duplicates: usize,
 }
 
 #[derive(Deserialize)]
@@ -232,7 +234,7 @@ pub(crate) fn run_relay_command(args: &[String]) -> std::io::Result<i32> {
     }
 }
 
-pub(super) fn sync_team(
+pub(crate) fn sync_team(
     database: &std::path::Path,
     team_id: &str,
     endpoint: &str,
@@ -267,11 +269,19 @@ pub(super) fn sync_team(
     )?;
     let mut store = TeamStore::open(database).map_err(|error| error.to_string())?;
     let mut uploaded = 0;
-    for events in store
+    let pending = store
         .team_events(team_id, 20_000)
         .map_err(|error| error.to_string())?
-        .chunks(MAX_UPLOAD_EVENTS)
-    {
+        .into_iter()
+        .filter_map(
+            |event| match store.relay_knows_event(team_id, &endpoint, &event.event_id) {
+                Ok(false) => Some(Ok(event)),
+                Ok(true) => None,
+                Err(error) => Some(Err(error.to_string())),
+            },
+        )
+        .collect::<Result<Vec<_>, _>>()?;
+    for events in pending.chunks(MAX_UPLOAD_EVENTS) {
         let mut envelopes = Vec::with_capacity(events.len());
         for event in events {
             let public_key = store
@@ -287,6 +297,14 @@ pub(super) fn sync_team(
         let upload = Upload { events: envelopes };
         let result = post_upload(&agent, &url, token, &upload, team_id, &identity)?;
         let _ = result.cursor;
+        if result.accepted.checked_add(result.duplicates) != Some(events.len()) {
+            return Err("relay did not acknowledge every uploaded event".into());
+        }
+        for event in events {
+            store
+                .remember_relay_event(team_id, &endpoint, &event.event_id)
+                .map_err(|error| error.to_string())?;
+        }
         uploaded += events.len();
     }
 
@@ -323,12 +341,21 @@ pub(super) fn sync_team(
             events.push(remote.event);
         }
         if !events.is_empty() {
+            let received_ids = events
+                .iter()
+                .map(|event| event.event_id.clone())
+                .collect::<Vec<_>>();
             let message = SyncMessage::Events {
                 team_id: team_id.to_string(),
                 events,
             };
             let report = apply_remote_events(&mut store, team_id, &message, now())
                 .map_err(|error| format!("event verification/apply failed: {error}"))?;
+            for event_id in received_ids {
+                store
+                    .remember_relay_event(team_id, &endpoint, &event_id)
+                    .map_err(|error| error.to_string())?;
+            }
             applied += report.inserted;
             cursor = next_cursor;
             store
@@ -342,6 +369,110 @@ pub(super) fn sync_team(
         }
         if events_is_empty_at_cursor(previous_cursor, next_cursor) {
             return Err("relay pagination made no progress".into());
+        }
+    }
+    let (direct_uploaded, direct_applied) =
+        sync_direct_messages(&agent, &store, team_id, &endpoint, token, &identity)?;
+    Ok((uploaded + direct_uploaded, applied + direct_applied))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectPage {
+    messages: Vec<DirectRemote>,
+    cursor: u64,
+    has_more: bool,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DirectRemote {
+    sequence: u64,
+    message: crate::crewai_message::DirectMessage,
+}
+
+fn sync_direct_messages(
+    agent: &ureq::Agent,
+    store: &TeamStore,
+    team_id: &str,
+    endpoint: &str,
+    token: &str,
+    identity: &DeviceIdentity,
+) -> Result<(usize, usize), String> {
+    let target = format!("{endpoint}/v1/teams/{team_id}/direct-messages");
+    let mut uploaded = 0;
+    for message in store
+        .queued_direct_messages(team_id)
+        .map_err(|e| e.to_string())?
+    {
+        let body = serde_json::to_vec(&message).map_err(|e| e.to_string())?;
+        let (timestamp, nonce, signature) =
+            access_proof(identity, team_id, "POST", &target, &body)?;
+        let response = agent
+            .post(&target)
+            .header("Authorization", &format!("Bearer {token}"))
+            .header("Content-Type", "application/json")
+            .header("x-relay-device", identity.device_id())
+            .header("x-relay-time", &timestamp.to_string())
+            .header("x-relay-nonce", &nonce)
+            .header("x-relay-signature", &signature)
+            .send(body.as_slice())
+            .map_err(|_| "Could not send direct message; it remains queued".to_string())?;
+        if !response.status().is_success() {
+            return Err(relay_rejection(response, "direct message upload"));
+        }
+        store
+            .mark_direct_synced(team_id, &message.message_id)
+            .map_err(|e| e.to_string())?;
+        uploaded += 1;
+    }
+    let mut cursor = store.direct_cursor(team_id).map_err(|e| e.to_string())?;
+    let mut applied = 0;
+    loop {
+        let url = format!("{target}?after={cursor}&limit=16");
+        let response = match get_page(agent, &url, token, team_id, identity) {
+            Ok(response) => response,
+            // Older relays have no private mailbox. Existing team sync must still work;
+            // queued direct messages are never marked delivered by this fallback.
+            Err(error)
+                if uploaded == 0 && error.starts_with("relay rejected download with HTTP 404") =>
+            {
+                return Ok((0, 0))
+            }
+            Err(error) => return Err(error),
+        };
+        let page = response
+            .into_body()
+            .with_config()
+            .limit(1024 * 1024)
+            .read_json::<DirectPage>()
+            .map_err(|_| "Invalid direct-message response".to_string())?;
+        if page.messages.len() > 16 || page.cursor < cursor {
+            return Err("Invalid direct-message cursor".into());
+        }
+        let mut next = cursor;
+        for entry in page.messages {
+            if entry.sequence <= next || entry.message.team_id != team_id {
+                return Err("Invalid direct-message order or team".into());
+            }
+            if store
+                .insert_direct_message(&entry.message)
+                .map_err(|e| format!("Direct message rejected: {e}"))?
+            {
+                applied += 1;
+            }
+            next = entry.sequence;
+        }
+        if page.cursor != next || (page.has_more && next == cursor) {
+            return Err("Invalid direct-message page".into());
+        }
+        if next > cursor {
+            store
+                .advance_direct_cursor(team_id, next)
+                .map_err(|e| e.to_string())?;
+            cursor = next;
+        }
+        if !page.has_more {
+            break;
         }
     }
     Ok((uploaded, applied))
@@ -435,7 +566,7 @@ fn get_page(
     Err("relay download failed".into())
 }
 
-pub(super) fn auto_sync_after_write(
+pub(crate) fn auto_sync_after_write(
     database: &std::path::Path,
     team_id: &str,
 ) -> Result<bool, String> {

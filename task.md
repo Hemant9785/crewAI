@@ -1,137 +1,243 @@
-# Sketch-driven team workspace tasks
+# crewAI conversational terminal implementation
 
-This is the ordered implementation checklist derived from the code-to-sketch comparison. Implement one numbered task at a time. Check off an item only after the behavior and verification below are complete.
+Status: implementation in progress; the conversation screen and command flows are not yet available for user testing.
+Approved: 2026-11-22. This file replaces the previous task checklist at the owner's request. Earlier implementation history remains in Git and existing validation documents.
 
-## Current implementation baseline
+## Outcome
 
-Herdr retains Spaces and local agent panes beside the terminal. The Team panel shows the newest task and broadcast activity, scrolls through a bounded recent window, offers a broadcast composer, shows task completion announcements, and reports outbox delivery counts. The Team Dashboard supports profiles, teams, invite/join/approval, multi-member task assignment, task status actions, local /read, remote /check, and an Access view with permission decisions and grant chains.
+Inside a Herdr terminal, typing `/crewai` opens our own conversational terminal interface. It has one input, discoverable slash commands, teammate mentions, readable answers and contextual actions. Spaces, Agents and other terminal panes remain usable. Everyday work must be possible without visiting the old Team dashboard or running setup commands in another PowerShell window.
 
-A local agent pane can be explicitly linked to an active task assigned to the current member. That link stays in the current Herdr session and is not synchronized. Background relay sync starts after invite, join, or approval when relay credentials are available in memory. Manual sync remains available.
+Design references:
 
-The Access view is inspection-only. The current code has no signed, synchronized grant/revoke command path, so the dashboard does not mutate permissions. On Windows, remote /check may require explicit --confirm-unisolated; Herdr does not claim an enforced read-only filesystem boundary in that case.
+- [Conversation inside Herdr](design/crewai-conversation-reference.png)
+- [Commands, teammate picker and inline approval](design/crewai-command-flow-reference.png)
+- [Reference interpretation](design/README.md)
 
-## Ordered implementation
+These images define the intended experience. Their sample messages and success states are illustrative; implementation must use real domain operations, synchronized records and assistant results.
 
-- [x] **1.1 Make recent task and broadcast feeds browsable.**
-  - Keep Spaces and Agents visible beside the terminal and show the active workspace label in the header.
-  - Show recent tasks and broadcasts newest-first in the Team panel with mouse-wheel and keyboard scrolling. Retain a bounded recent window.
-  - Show task completion announcements in the activity feed.
-  - **Completion note:** Added independent task/activity scroll positions, newest-first rendering of the latest 100 records, and linked task hit targets. Workspace name remains visible in the existing Herdr header. Verification: `.\tools\build-herdr.ps1 -Mode test -Filter team_panel` (2 passed), `.\tools\build-herdr.ps1 -Mode test -Filter team_view` (6 passed); rustfmt check passed on touched shell files.
+## Required command contract
 
-- [x] **1.2 Assign work to one or several teammates.**
-  - Select active members by display name and role; confirm recipients before assignment.
-  - Create one independently tracked task per selected member.
-  - Keep signed identity and explicit authorization as the source of trust.
-  - **Completion note:** The Dashboard task flow collects a description, then offers a Space-toggle member picker. Enter creates a separate signed task per selected member. Verification: focused `team_dashboard` tests passed (5 passed in the integrated source); `.\tools\build-herdr.ps1 -Mode check` passed.
+| Command | Intended behavior |
+| --- | --- |
+| `/read <question>` | Ask about this device's connected project. Guide project/assistant setup inline if needed. |
+| `/read <question> @teammate` | Ask the selected teammate's project; receive its owner's decision and actual assistant answer in the conversation. Also accept the mention before the question. |
+| `/team-mates` | Show teammates and contextual profile, Create/Join, Invite, approve/reject and project-connection actions. |
+| `/task @teammate <description>` | Assign a real task; show acceptance, progress, completion and follow-ups inline. |
+| `/broadcast <message>` | Send a team message and show truthful queue/delivery state. |
+| `/message @teammate <message>` | Send a recipient-only human message; show the real human reply in context. |
 
-- [x] **1.3 Update task state from the Dashboard.**
-  - Let users select a task and apply supported status transitions from the UI.
-  - Keep changes signed and recorded through the existing task command path.
-  - **Completion note:** Tasks support selection and actions for accepted, in-progress, done, cancelled, and needs-attention states. Verification: focused `team_dashboard` tests passed (5 passed); `.\tools\build-herdr.ps1 -Mode check` passed.
+Typing `/` discovers the five commands; typing `@` chooses a person. Names are presentation labels; operations use stable signed member/device IDs internally. Do not require users to type IDs, repository identifiers, relay URLs, tokens or JSON files.
 
-- [x] **1.4 Announce completed tasks in team activity.**
-  - Show a done task and its completing member in the shared activity/broadcast view.
-  - Derive the announcement from the signed task-status history so relay replay does not create duplicates.
-  - **Completion note:** Completion notices are derived from accepted Done task activity and merged into the broadcast feed without adding a second event. Verification: `team_view` tests passed (6 passed); duplicate delivery remains idempotent through the existing event projection.
+## Existing code to reuse
 
-- [x] **1.5 Link local agent panes to team tasks.**
-  - Provide explicit link/unlink actions from an agent pane.
-  - Show the linked task and state beside the local agent, and let users focus that pane from the task feed.
-  - Do not launch an agent or grant repository access implicitly.
-  - **Completion note:** Added pane context-menu actions, a picker restricted to active tasks assigned to the local profile, an Agents row annotation, and task-to-pane focus navigation. The mapping is local session state and resets when Herdr exits. Verification: `.\tools\build-herdr.ps1 -Mode test -Filter task_picker_tests` (1 passed), `.\tools\build-herdr.ps1 -Mode check` passed; touched UI files passed rustfmt.
+Inspection confirms the following foundations exist; their presence does not mean the new conversation UI or private messaging is implemented:
 
-- [x] **1.6 Show effective repository access in Team Dashboard.**
-  - Display members, repository decisions, grant-chain identifiers, and denial reasons.
-  - Keep role labels distinct from authorization decisions and show grants as directional.
-  - **Completion note:** Added an Access section using the read-only permission decision path. No grant/revoke controls were added because the project has no signed synchronized API for permission changes. Verification: focused `team_dashboard` tests passed (5 passed); `.\tools\build-herdr.ps1 -Mode check` passed.
+- `herdr/src/team_session.rs`: profile, project connection, protected credentials/drafts and saved team contexts.
+- `herdr/src/cli/questions.rs`, `read.rs`, `assistant.rs`: project announcements, owner consent, requests and bounded native assistant answers.
+- `herdr/src/cli/team.rs`, `join_inbox.rs`, `task.rs`, `broadcast.rs`: signed team operations, pairing, tasks and team broadcasts.
+- `herdr/src/team_storage.rs`, `team_storage/permission_events.rs`: SQLite/event projections and consent validation.
+- `herdr/src/cli/relay.rs`, `client/team_relay_sync.rs`, `relay/src/`: signed-device Internet synchronization.
+- `herdr/src/client/shell/`: existing dashboard, terminal composition, mouse/input handling and Spaces/Agents integration.
 
-- [x] **1.7 Create and review remote repository checks in Herdr.**
-  - Let a user select a teammate and repository, enter a question, and review request state and bounded result.
-  - Keep remote /check distinct from local /read. Recheck permissions through the existing check command and surface the platform's isolation limitation.
-  - **Completion note:** Added a Check form and bounded request result preview in the Requests section, reusing the existing /check authorization and execution path. The UI does not claim Windows unisolated checks are enforced read-only. Verification: focused `team_dashboard` tests passed (5 passed); `.\tools\build-herdr.ps1 -Mode check` passed.
+The current broadcast service is not a private-message backend. The current Requests/dashboard UI is not the new conversation view. Reuse working services and records; keep the old UI as a compatibility path until the new flows work.
 
-- [x] **1.8 Sync team activity in the background.**
-  - Start bounded background relay sync when invite/join/approval credentials become available.
-  - Keep credentials in memory and out of logs, persistent storage, and command arguments.
-  - Show queued, retryable, syncing, delivered, and failed event counts; preserve manual sync.
-  - **Completion note:** Invite/join/approval results update an in-memory credential sink and wake the sync worker. Team panel counts come from persisted outbox records. Verification: `.\tools\build-herdr.ps1 -Mode check` passed; `delivery_summary` test passed (1); `client::team_relay_sync` tests passed (4). Physical cross-network sync is still unverified.
+## Implementation rules
 
-- [ ] **1.9 Complete a two-laptop acceptance walkthrough.**
-  - Use two independent Windows clients, preferably on separate networks.
-  - Create/join/approve a teammate, assign work to multiple members, update task status, verify completion activity, link a local agent pane, inspect Access, run /read and /check, and confirm background sync after a disconnect/reconnect.
-  - Record screenshots or output and platform limitations.
-  - **Progress note (2026-11-21):** The full Rust suite completed with 3,474 passed, 61 failed, and 12 ignored. Failures covered existing worktree, session, Windows/platform, manifest, and several shell rendering tests; focused team/dashboard/feed/sync suites and the integrated check passed. Manual acceptance is blocked until a second Windows laptop and network are available. Next action: run the documented invite/task/check workflow with a teammate laptop and verify relay reconnect.
+Implement one numbered task at a time, in order. Build working vertical flows, not placeholder screens. Start with domain/parser/protocol checks, then connect the UI to verified operations. All checkboxes below remain unchecked until behavior and its verification are complete.
 
-- [x] **1.10 Ship prebuilt release binaries with one-command installers.**
-  - Build Linux x86_64 and Windows x86_64 release packages from version tags.
-  - Publish checksums and provide installers that download the matching binary without building source on the user's device.
-  - **Completion note (2026-11-21):** Added version-tagged Linux x86_64 and Windows x86_64 packages, SHA-256 checksums, one-command installers, a Team Herdr version identity, and a guard against self-updating from upstream Herdr. GitHub Actions published release `v0.1.4`. Installers now register the `herdr` command on the current user's PATH; Linux shell startup files are updated so new terminals resolve it. Verification: release workflow run `44896414916` succeeded; both downloaded archives matched published checksums; the Windows binary reported `herdr v0.1.4`; installer syntax checks passed. Limitations: ARM64 Linux and macOS binaries are pending; installing on the EC2 instance and the two-client Internet walkthrough remain in task 1.9.
+Keep UI, command parsing, domain services, persistence, synchronization and assistant execution separated. Use migrations for schema changes. Preserve existing teams, identities, credentials, approvals, tasks and messages. Do not weaken signatures, device approval, permissions, revocation, replay protection or process isolation to simplify the interface. Repository files stay on their owner's device. Never label assistant execution read-only unless the OS boundary enforces it; limited isolation requires informed explicit confirmation.
 
-- [ ] **1.11 Enable local team profile setup on Linux.**
-  - Use a persistent XDG/home database path instead of `/tmp`.
-  - Support Linux signing identities without logging or transmitting their private keys; document their local storage protection.
-  - Verify profile creation and identity reload in the Linux release build.
-  - **Progress note (2026-11-21):** EC2 profile setup failed because Linux key storage was unsupported and the dashboard defaulted to `/tmp`. The owner explicitly approved an unencrypted, owner-only Linux identity file for this prototype. Published release `v0.1.5`; its Linux release smoke created the profile database and identity file and verified identity mode `0600`. Focused Windows-hosted tests passed for identity round-trip (2) and persistent path selection (1). Manual EC2 setup retest remains pending. Limitation: Linux identity keys are not encrypted at rest.
+Prefer the smallest working Windows/Linux prototype. Defer speculative edge cases and unrelated refactors; required authorization, input validation and data preservation are part of the prototype.
 
-- [x] **1.12 Fix dashboard paste and support six-digit invites.**
-  - Dashboard forms accept terminal paste and clipboard shortcuts.
-  - Relay stores signed invitations temporarily; six-digit codes expire after ten minutes and are one use. Signature validation and manager approval remain required.
-  - **Completion note (2026-11-22):** Fixed bracketed paste and clipboard targets in dashboard forms. Added six-digit relay lookup, one successful claim, ten-minute expiry, per-IP attempt limits, alarm cleanup, and legacy invite compatibility. Relay tests (8), typecheck, dashboard tests (7), and live isolated signed invite/join/approval/member-sync smoke passed. Deployed relay version `5d2b9e8e-87b5-416e-a29f-aa411a307823`. Published Windows/Linux release `v0.1.6` from `a449469`; workflow `45013945310` succeeded and both downloaded archives matched SHA-256 checksums. Windows reports `herdr v0.1.6`; Linux release onboarding/0600 identity smoke passed. Full suite attempted: 2,946 passed, 9 failed before two unrelated transport tests stalled; stopped the stalled run. Integrated Rust check passed. Limitations: join requests still use long signed clipboard codes; relay operator can read temporary invitations and shared relay tokens; reconnect needs a fresh short code.
+## Ordered implementation checklist
 
-- [x] **1.13 Deliver join requests automatically and decide in the dashboard.**
-  - Entering an invite submits the signed join request to a bounded persistent relay inbox.
-  - Manager sees pending names/devices in Requests and approves or rejects without a return code.
-  - Poll requester decision status, preserve signature and invitation checks, verify replay/authorization, and publish updated binaries.
-  - **Completion note (2026-11-22):** Added bounded persistent signed pairing inbox, automatic dashboard submission, authority-only request listing and decisions, five-second dashboard polling, requester decision status, and selected-request approval/rejection with no pasted return code. Decisions bind to the exact signed request; original local invitation/signature checks still gate membership. Legacy manual approval uses capital `A`. Verification: relay tests (10), typecheck, dashboard tests (9), integrated Rust build/check, and live isolated approval/rejection/status/member-sync smoke passed. Deployed relay `5edaf382-6d56-4abf-ac6a-af83bcf232af`. Published Windows/Linux release `v0.1.7` from `544ce94`; workflow `45016653224` succeeded. Both downloaded hashes verified; released Windows binary passed approval/rejection/status/task/broadcast sync smoke, and Linux release onboarding passed. Limitations: inbox polling requires an open dashboard; pairing metadata expires after seven days on access; credentials remain session-only and reconnect needs a fresh invite. Broad suite attempted with two known stalled tests excluded: 3,492 passed, 44 failed; stopped after two other transport stalls.
+### 1. Lock the conversation and launch contract
 
-- [x] **1.14 Make dashboard manager setup independent of shell relay settings.**
-  - Supply the default relay URL and a random team credential; retain the credential across dashboard close/reopen in the same process.
-  - Pass explicit credentials to invite creation and use distinct fresh profile IDs.
-  - Verify fresh-manager create/invite/join and publish updated release binaries.
-  - Review four user flows independently and record remaining issues.
-  - **Completion note (2026-11-22):** Default URL and random credential are configured by the dashboard, retained in the shared sink before creation, and passed explicitly to invites. Fresh profile IDs are unique and existing IDs are preserved. Four independent code reviews are in `docs/2026-11-22-user-flow-review.md`; remaining findings are tasks 1.15-1.18. Verification: 12 dashboard tests and Rust build passed. Published Windows/Linux v0.1.8 from `29b4307`; workflow `45019140816` succeeded. Both downloaded package hashes matched; released Windows pairing/approval/rejection/status/task/broadcast smoke passed, including database assertions for received messages/tasks and rejected-member absence. Installed Windows binary reports v0.1.8; Linux release onboarding smoke passed. Limitations: physical EC2-to-Windows UI retest remains pending; whole-app manager restart recovery is still missing under the memory-only policy; previous broad-suite failures/stalls remain unresolved.
+- [x] Update `spec.md` with the approved pane-based conversation, the five commands, local/remote `/read` semantics and direct-message access boundary. Preserve its existing trust guarantees.
+- [x] Define `/crewai` entry at an idle supported shell prompt, how it launches/resumes the session, and how Esc returns safely to the shell. Provide `herdr crewai` as the executable entry used by integration and automation.
+- [x] Define focus rules: arrows navigate an open picker or selected transcript action; editing keys edit text; no implicit switching between dashboard sections.
+- [x] Define plain-text follow-up behavior only for a visibly selected conversation/recipient; ambiguous input must not silently broadcast or start an assistant request.
 
-- [x] **1.15 Separate pairing access from approved-device team-event reads.**
-  - Review finding: pending/rejected invite holders possess a shared relay token and can fetch broadcasts. Enforce approved-device read access without weakening signatures.
-- [x] **1.16 Enforce task permissions and resolve concurrent task-state updates.**
-  - Review findings: unauthorized task updates and redundant concurrent states can block synchronization.
-- [ ] **1.17 Add deliberate manager credential recovery and safe profile/team editing.**
-  - Preserve the current memory-only boundary until a protected persistence/recovery design is explicitly chosen.
-- [ ] **1.18 Complete readable local answers and in-terminal workflows.**
-  - Review findings: Codex executable discovery, clipped answers/messages, contextual slash commands, task history/followups, delivery feedback, and selection viewports.
+Verification: walk the approved example conversation against both references, document the chosen launch mechanism and exact interaction rules before application edits.
 
-- [x] **1.19 Show invite digits when remote clipboard copying is unavailable (user-prioritized bug).**
-  - Display the six-digit invite in a fixed dashboard header across tabs, including after copy.
-  - Report copy as requested, not confirmed, for unacknowledged terminal clipboard forwarding.
-  - Preserve legacy bundle privacy; verify dashboard regressions and publish release binaries.
-  - **Completion note (2026-11-22):** The current six-digit invite stays in a fixed header on every dashboard tab, including after copy. Clipboard feedback now says Copy requested because terminal output is not browser clipboard acknowledgement. Legacy invite bundles are excluded from the header. Verification: 14 dashboard tests passed; Windows/Linux release v0.1.9 (`84e7712`, workflow `45027201054`) succeeded, downloaded SHA-256 hashes matched, released Windows binary passed the pairing/approval/rejection/status/task/broadcast smoke, and installed Windows reports v0.1.9. Linux release onboarding passed. Limitations: EC2 browser clipboard forwarding itself is not guaranteed, physical browser verification is pending, and manager restart recovery remains task 1.17. Review tasks 1.15-1.18 remain pending.
+Completion note: Added the approved conversation, command, consent and recipient-only DM contract to `spec.md`. The entry uses shell-local command registration for interactive PowerShell and non-login Bash and `herdr crewai` as the executable; unsupported shells keep the explicit command. Walked the five reference commands and inline approval against the written contract. PowerShell 5 and Git Bash accepted a shell-local function named `/crewai`; Linux runtime validation remains under task 6.
 
-## Guided journey implementation
+Entry implementation update: `herdr crewai` exists, and the literal PowerShell function opened it inside an isolated Windows Herdr pane and returned to the shell on Escape. Linux runtime validation remains for EC2 under task 6.
 
-- [ ] **2.0 Implement the approved complete guided journey.**
-  - Deliver reviewed items 1.15-1.18 as ordered integration components: approved-device relay access, task authorization/convergence, remembered team connections and safe switching, question consent/execution, guided UI and readable results.
-  - Name-only onboarding, optional project setup, visible Invite/Ask/Assign/Message actions, reliable selected-recipient behavior, task details/followups, readable messages/answers, draft retention, automatic refresh, actionable errors.
-  - Keep old data, existing terminal behavior, signatures, revocation, replay protection and execution isolation intact.
-  - Verify relevant backend and terminal flows, independent QA/review, then release Windows/Linux packages. No checkbox is complete until its behavior is verified.
+### 2. Implement command and mention parsing
 
-## Known prototype limitations
+- [x] Add a typed parser for the five commands, their bodies and teammate references; keep it independent of rendering and shell execution.
+- [x] Accept the approved examples, including a mention at the end of `/read`, spaces, multiline paste and URLs without losing message text.
+- [ ] Resolve picker choices to stable member IDs. Ambiguous or missing names open a picker rather than guessing a target.
+- [x] Add focused parser tests for valid commands, unknown/empty commands, missing recipients, duplicate display names and malformed/oversized input. Invalid input must not dispatch an operation.
 
-- Permission inspection is available; a general permission grant/revoke UI is pending. Project questions have signed owner consent.
-- Agent-pane/task links reset when Herdr exits and are not shared with teammates.
-- A physical two-laptop Internet acceptance run remains outstanding.
-- Windows remote checks require explicit unisolated confirmation because an OS-enforced read-only boundary is unavailable.
-- The one-command release installer currently supports Linux x86_64 and Windows x86_64; Linux ARM64 and macOS releases are pending.
+Verification: parser tests pass before connecting commands to application services.
 
-Release artifact smoke (2026-11-22): downloaded Windows v0.1.6 binary passed live isolated profile setup, signed short-invite lookup, duplicate-claim rejection, join, approval, and member relay sync. Windows package includes ConPTY runtime and licenses.
+Completion note: `crewai_command.rs` parses the five commands, returns explicit recipient-picker choices for missing or duplicate names and resolves selected IDs against active members. Verification: `powershell -ExecutionPolicy Bypass -File .\tools\build-herdr.ps1 -Mode test -Filter crewai_command::tests` passed 3/3, including multiline/URL, malformed/oversized and duplicate-name cases. Limitation: rendering/opening the picker is part of task 7; no UI dispatch is connected yet.
 
+### 3. Expose shared application services
 
-- **Release progress (2026-11-22):** Integrated guided team home, name-only onboarding, protected remembered connections, safe team switching, recipient-first tasks/questions, task history/followups, scrollable messages/answers and limited-isolation owner consent. Relay now requires approved-device signed event access; deployed `84a58c7f-c22b-4169-ba85-d240f87892a7`. Connection tests 6/6, task authorization/convergence 3/3, sync/background filter 14/14, question permissions 5/5 and assistant helpers 3/3 passed. Independent review found mouse footer dispatch and clipped consent warnings; both corrected. Dashboard tests 15/15, storage tests 23/23 and opt-in native mock question/approval/answer roundtrip 1/1 passed. Final build and release verification in progress. Keep task 2.0 unchecked until independent UX acceptance, broader editing/revocation and contextual command polish are complete. Physical EC2/Windows acceptance remains unverified.
+- [x] Extract/reuse callable services for profile/team actions, project setup, tasks, broadcasts and questions; do not make the new UI depend on legacy overlay state.
+- [x] Expose bounded progress/result events correlated to operation IDs, with consistent domain errors and queue/delivery semantics.
+- [x] Run synchronization and assistant work outside input/render loops; reuse the saved active-team connection and avoid global credentials replacing it.
+- [x] Verify operations directly against isolated local profiles before rendering success messages. Preserve existing CLI/dashboard compatibility.
 
-- **Release note (2026-11-22):** Published Windows/Linux `v0.2.0` from `98a84db`; workflow `45035221881` succeeded. Both downloaded archives matched SHA-256 checksums, released Windows reports v0.2.0, and released binary passed live invite/approval/rejection/status/task/message sync with database receipt assertions. A separate live task lifecycle confirmed manager receipt of Done/followup. Full verification and remaining limitations: `docs/2026-11-22-guided-release-validation.md`. Tasks 1.15/1.16 are verified; 1.17/1.18/2.0 retain pending broader UX/editing scope.
+Verification: service tests cover real persistence, authorization and operation results; no subprocess CLI output scraping is required by the conversation renderer.
 
-- [ ] **2.1 Fix the reported Windows project-sync HTTP 401 (user-prioritized).**
-  - Diagnose legacy global relay settings versus saved team credentials. Prefer the active team database's protected connection, preserve explicit CLI overrides and all signature/approval checks. Add safe actionable relay errors, verify the actual Windows project sync and relevant regressions, then update binaries if required.
+Progress note (2026-11-23): Added `crewai_service.rs` with signed task/broadcast operations, local/remote question/project wrappers, profile/create/join/invite/review methods, saved-connection sync, and correlated bounded background progress/results. Queue bookkeeping is distinct from durable save. Added team-scoped member lookup and a regression that excludes members of another team. Verification: isolated service tests 3/3; existing CLI tests 147/147; storage tests 23/23 (one existing opt-in test ignored). The isolated local Worker test passed end to end: create team, issue/claim invite, submit/approve join, sync membership, assign task, broadcast and verify both records on the teammate. An equivalent synthetic test against the deployed relay returned HTTP 500 at team bootstrap; the pre-existing released CLI reproduced it. A filtered production error trace identified `Exceeded allowed rows read in Durable Objects free tier`; `/healthz` still returned 200. Cloudflare documents a 00:00 UTC daily free-limit reset (05:30 India time). No billing changes were made. The service exposes background start/result channels for sync and assistant execution; the later UI task must consume those channels. The UI has not yet dispatched the service, and production Internet delivery remains unverified until quota resets.
 
-  - Also address the live question-selection report: when no join requests are pending, Up/Down selects questions rather than switching sections; clicking a question opens its review. Keep existing bracket shortcuts and approval confirmation.
+Completion note: reusable team/profile, pairing, project, task, broadcast, question and sync interfaces use the same authenticated domain and encrypted saved connection. Sync and assistant start methods dispatch off-thread and return correlated bounded updates; the UI integration is deferred to its ordered tasks. Verification: `crewai_service::tests` 3 passed and local relay invite/approval/task/broadcast integration 1 passed; existing CLI 147 passed and storage 23 passed (one opt-in ignored). Limitations: cloud relay quota exceeded; no real Codex model or physical EC2/Windows run performed.
 
-  - **Fix verification (2026-11-22):** Structured relay response confirmed invalid_team_token from stale global credentials. Saved-first fix synchronized the actual Windows team (3 project events uploaded and 3 signed membership events applied); no re-enrollment or permission weakening. Tests: connections 7/7, dashboard 16/16 including arrow/mouse question selection, CLI 147/147 and safe error guidance 1/1. Independent review found and corrected explicit-URL/environment-token compatibility. Final v0.2.1 development binary installed on Windows with hash verification and successful actual-team sync. Source pushed as `335c962`; GitHub Windows/Linux patch release workflow `45039586492` is still building, so artifact publication/checksum verification remains pending. Existing open windows require relaunch to use navigation fix.
+### 4. Build a genuine direct-message backend
+
+Design decision: recipient-scoped authenticated relay mailbox, separate from the team event stream. The relay operator can read message bodies; other approved members cannot fetch them. The signed envelope binds both participants and a stable ID. See `spec.md` for validation and local retention requirements.
+
+- [x] Define signed direct-message records with stable IDs, sender, recipient, bounded body, reply/thread association and delivery metadata; add migrations and projections.
+- [x] Implement sender/recipient access in transport and storage. Keep plaintext DMs out of the team-readable broadcast event stream; choose recipient-scoped authenticated delivery or encrypted envelopes in the architecture contract.
+- [x] Implement offline queueing, reconnect delivery and real recipient replies using the existing identity/sync foundations.
+- [x] Add positive two-person tests and a third-member negative test: an unrelated approved teammate cannot fetch/read the DM body. Reject forged sender, wrong-team, revoked-device and replayed/conflicting input.
+
+Verification: private message and reply work before adding their UI; team broadcast APIs cannot substitute for this task.
+
+Progress note (2026-11-23): Added signed bounded envelopes, migration, recipient-scoped relay mailbox, offline local queue and cursor-based synchronization. The relay operator can read message bodies. Relay tests pass (12/12), including denial to an unrelated approved teammate, conflicting signed IDs and replayed proofs; the storage validation test passes. An isolated Rust-to-local-Worker integration test passed team setup, approval, private message delivery and an actual reply. Older relays continue ordinary team synchronization; messages stay queued until a mailbox-capable relay is available. LAN parity and the conversation UI remain pending, so this is not yet a usable `/message` feature.
+
+Additional verification: reopening the sending service before sync preserved and delivered the queued message, then the recipient's reply returned successfully. The full Herdr suite did not finish: several `server::client_transport` tests hung beyond 60 seconds in parallel, while an individual handshake test passed. A serial rerun progressed past 3,000 tests but stalled in the remote bridge tests. It also reported failures in existing agent-status, Git refresh and Windows input tests. Do not treat the full suite as passing. Next: investigate the bridge stall and rerun the full suite before closing this phase.
+
+Additional sync fix: ordinary sync previously re-uploaded the complete event history every five seconds, which can exhaust the production relay quota and prevent message delivery. Added a migration-backed per-team/per-endpoint acknowledgement cache; only successfully acknowledged or verified downloaded events are cached, and unacknowledged events remain retryable. Verification: the isolated local relay integration passes team creation, join/approval, task, broadcast, direct message and reply; an idle sync reports zero re-uploads and different endpoints do not share acknowledgements. The schema migration test preserves an existing cursor. Production quota behavior remains unverified.
+
+Completion note: direct messages use a separate recipient-scoped authenticated mailbox, signed envelopes, durable queues and reply associations; the relay operator can read message text. The local Worker integration and relay tests verify two-person delivery/replies and third-person denial. A full-suite run with two previously stalling bridge tests run separately finished: 3,562 passed, 12 failed, 14 ignored; both isolated bridge tests passed. Several Git failures occur because the test temporary directory is inside this repository; other failures include agent status, Windows input, terminal rendering and Windows backup tests. The suite is not green. Direct messages currently require the Internet relay; LAN-only direct-message transport and production deployment remain unverified, and the conversational UI is not implemented yet.
+
+### 5. Add the durable conversation model
+
+- [x] Define entries for user commands, assistant answers, human messages, broadcasts, task activity, approvals, progress and failures, with explicit speaker/recipient identity.
+- [x] Associate entries with stable request/event/task IDs so synchronization and refresh update the correct item without duplicate replies or moving an approval to a different question.
+- [x] Persist/reconstruct bounded history and drafts per saved team and relevant thread; migrate existing records without deleting or reassigning them. Local `/read` history stays local.
+- [x] Verify restart recovery, duplicate event delivery and multiple simultaneous questions with a completed question followed by another pending question.
+
+Verification: deterministic model/storage tests pass; histories and drafts remain separated across team switching.
+
+Progress note (2026-11-23): Added a local schema for stable conversation entries, explicit links to related questions/tasks/messages and team/thread-scoped encrypted drafts. Updates preserve the original entry identity, reject stale or conflicting replacements, and retain at most 500 entries per thread. Four focused tests pass for restart, duplicate events, simultaneous questions, bounded retention, migration and draft isolation. The local relay integration confirms reconstruction of actual tasks, broadcasts and human replies. UI integration is still pending.
+
+Completion note: history and protected drafts are stored locally per team/thread; signed team records and participant-only direct messages reconstruct into stable entries with related IDs. Verification: four conversation tests and the local two-profile relay/thread integration passed. The wider suite was run in two serial groups with the two interfering bridge tests run separately: 3,566 passed, 12 failed, 14 ignored, plus both bridge tests passed; the 12 existing failures match the preceding phase. Several Git failures are caused by the temporary directory being inside this repository. Local `/read` entry creation and the visible screen are part of later tasks and have not yet been manually exercised.
+
+### 6. Launch the interface inside the terminal pane
+
+- [ ] Implement the actual `herdr crewai` terminal session and wire literal `/crewai` entry through supported Herdr shell integration on Windows and Linux without manual alias setup.
+- [x] Match the reference layout: compact team header, scrollable conversation and bottom composer inside the active pane; keep Spaces, Agents and other panes usable.
+- [ ] Restore terminal input modes, screen and shell prompt on exit/error. Reopening resumes the correct team's history and draft.
+- [ ] Ensure the entry hook does not capture `/crewai` text inside an editor, another agent, a pasted script or a running foreground program; do not globally steal terminal typing.
+
+Verification: launch and exit in a real Windows terminal and Linux shell; existing pane/tab/agent behavior remains functional. Verify the literal `/crewai` entry, not only a menu or fallback command.
+
+Progress note (2026-11-23): Added the `herdr crewai` pane process with alternate-screen cleanup, saved drafts, actual history, background sync and initial dispatch to real team, task, broadcast, private-message and remote-question services. Added a PowerShell `/crewai` function and a non-login Bash rc hook; isolated PowerShell and Git Bash accepted the function. The composer unit test passed for real broadcast/task/private-message persistence and invalid-draft recovery. An isolated Windows Herdr instance with synthetic team data accepted literal `/crewai`, displayed history inside its pane while Spaces/Agents remained visible, returned to PowerShell on Escape, and ran another shell command afterward. This is incomplete: onboarding, local `/read`, pickers and approval actions are not yet available in the conversation, and a Linux build and embedded Linux pane launch/exit have not been verified. Login Bash and other shells currently retain the `herdr crewai` fallback.
+
+Linux verification is deferred to the owner's EC2 instance at their request; do not use Ubuntu on this laptop. A Windows-hosted Linux cross-check could not complete because the vendored terminal library needs a Linux symbolic link that Windows denied. Next action: build the Linux artifact through the release workflow and verify `/crewai` in the EC2 Herdr pane.
+
+Windows follow-up: the shell prompt hook was tested in an isolated Herdr instance, and transcript scrolling now measures wrapped rows. The active team database is migrated once on service open; transcript refreshes use read-only database access. The focused composer and local relay integration tests passed. The full suite was run in two serial groups with two interfering bridge tests separately: 3,567 passed, 12 failed, 14 ignored and both isolated bridge tests passed. The failures match the preceding phase and the suite is not green. The shell entry is a shell function, so quoted `/crewai` text remains ordinary output; Linux and foreground/editor behavior still require EC2 validation.
+
+Implementation handoff: Windows pane launch and the implemented shell hooks are ready for the next ordered task. The remaining task 6 checkboxes stay open for the owner's EC2 build/pane validation and any fixes it reveals; no Linux success is claimed.
+
+### 7. Implement the composer and discoverable pickers
+
+- [ ] Show `/read`, `/team-mates`, `/task`, `/broadcast`, `/message` with short descriptions when `/` is entered; filter as the user types.
+- [ ] Open teammate autocomplete on `@`, support Up/Down, Enter, Escape and mouse selection, and preserve the rest of the input when inserting a mention.
+- [ ] Support normal editing, paste, wrapped input and command history; maintain a visible destination/context for follow-ups.
+- [ ] Preserve drafts on cancellation/failure and show clear inline corrections. Keep the focused row visible in pickers and long conversations.
+
+Verification: interaction tests and keyboard/mouse checks demonstrate command discovery and recipient selection without memorized bracket keys or section navigation.
+
+Progress note (2026-11-23): Added command and teammate suggestion state, Unicode-aware editing, paste, command history, keyboard and mouse picker handling, wrapped input and duplicate-name selection by stable member ID. Quoted mentions support names with spaces. Focused `crewai_` tests passed (11 passed, one opt-in relay integration ignored); the duplicate-name test verifies the task reaches the chosen member. A current Windows binary is being built for interaction verification. Follow-up selection and full-suite checks remain pending.
+
+Batching update: Added visible message selection and real private follow-ups, plus tests for ambiguous names and unaddressed text. These latest edits are not yet compiled or interaction-tested. Per the owner's request, related changes will be compiled and tested together rather than after each small edit; checkboxes remain open until verified.
+
+### 8. Complete onboarding and `/team-mates`
+
+- [ ] Show actual people, role labels and approval state in the conversation; do not equate approved membership with verified online presence.
+- [ ] Offer inline name-only Create/Join and manager Invite actions. Display six digits with expiry, Copy feedback and manual-entry fallback; join requests and approve/reject actions arrive inline.
+- [ ] Expose existing profile editing and safe saved-team switching. Offer project connection and a visible connected-project status/action; coordination-only EC2 requires no project or Codex installation.
+- [ ] Restore saved connections after restart. Keep repository ownership/consent separate from joining a team and explain pending approval or failed sync in place.
+
+Verification: fresh manager and teammate can create/join/approve and connect a project from this session without JSON handoff, external commands or opening the old dashboard.
+
+Progress note (2026-11-23): Added an in-pane welcome flow for create/join and a `/team-mates` panel for invite, join-request review, optional project connection, local name editing, creating/joining another team and saved-team switching. Invite codes are displayed without being placed in conversation history; clipboard copy is explicitly described as a request with manual-entry fallback. Join requests are polled in the background and pending membership is not labelled approved. The combined Windows compile check passed; full in-pane pairing and user interaction verification remain pending.
+
+Batching note: the follow-on project-question controls below have been added but not yet compiled with this setup flow. User-facing verification and checkboxes remain open.
+
+### 9. Complete conversational `/read`
+
+- [ ] Execute local `/read` using the selected local project and real native assistant; guide missing project/assistant/sign-in setup inline and preserve the question draft.
+- [ ] Execute `/read ... @teammate` through the signed remote question service, showing the chosen owner/project and queued/waiting/running states in the conversation.
+- [ ] Present incoming owner consent beside the exact question with Allow once, Allow project and Decline. Show accurate limited-isolation information and require explicit confirmation; recheck permissions before execution.
+- [ ] Show the actual bounded answer inline with readable paragraphs/code and distinct assistant attribution. Show progress honestly; do not simulate streaming a canned answer. Preserve answers/errors and support a real follow-up to the selected question/project.
+
+Verification: EC2 manager asks the Windows implementer's project, Windows approves the second of two questions, and the real answer returns to the correct EC2 conversation. Also verify denial and missing-assistant behavior without granting access implicitly.
+
+### 10. Complete conversational `/message`
+
+- [ ] Wire `/message @teammate <text>` to the verified DM service, showing sender, recipient and truthful state immediately.
+- [ ] Display the incoming message and its actual human reply in the appropriate conversation, distinct from assistant-generated output.
+- [ ] Let the recipient reply inline with a visible target; keep task-related message context when present without sending the text to Codex automatically.
+- [ ] Verify offline/restart recovery and third-member isolation through the rendered flow as well as the backend.
+
+Verification: manager sends ?what is the status of the task??; the teammate replies; both see the same thread and another teammate cannot read it.
+
+### 11. Complete conversational `/broadcast`
+
+- [ ] Wire the command to real signed team broadcasts and render incoming broadcasts in the conversation with author and team scope.
+- [ ] Distinguish saved/queued, synchronized and recipient acknowledgement where supported; never report relay acceptance as proof a human read it.
+- [ ] Preserve message drafts on failure and display reconnect/delivery updates without blocking the composer.
+
+Verification: `/broadcast checkout this source` reaches the teammate over the Internet and remains visible after restart, with no duplicate item after another sync.
+
+### 12. Complete conversational `/task`
+
+- [ ] Assign a real signed task using a mention and description; show the assignee, task text and current state in context.
+- [ ] Provide visible inline Accept/Start/Done/Need help/Follow up actions appropriate to the actor and current task state.
+- [ ] Reflect actual teammate updates and follow-ups in the sender's conversation; correlate actions to stable task IDs and preserve history.
+- [ ] Reuse existing task authorization/convergence and show failures honestly; no fake assignment/completion responses.
+
+Verification: manager assigns, teammate starts/completes/follows up, and manager sees the synchronized result without leaving `/crewai`.
+
+### 13. Integrate asynchronous arrivals and focused navigation
+
+- [ ] Surface incoming questions, approvals, messages and task updates while another command is being composed, without overwriting drafts or stealing focus.
+- [ ] Make keyboard and mouse invoke the same actions. Use visible focused selection and consistent review/confirm behavior for multiple requests.
+- [ ] Keep scrollback readable when new events arrive, and retain a clear way back to the latest activity.
+- [ ] Test reconnect and team switching with pending work so late results stay associated with their original team/question/thread.
+
+Verification: replay the user's completed-first-question/pending-second-question scenario and approve the second using ordinary selection; no Requests/Access/Broadcast tab switching is needed.
+
+### 14. Run end-to-end user acceptance
+
+- [ ] Use two isolated profiles and a third unauthorized message reader for automated domain/protocol checks. Run relevant tests after each change and the full suite at phase completion, recording known unrelated failures/stalls accurately.
+- [ ] Have independent QA/review exercise the complete new journey against the saved images and actual code. Fix verified blockers before calling the feature complete.
+- [ ] Test Linux EC2 manager and Windows implementer: `/crewai`, onboarding/invite, project connection, two `/read` questions with inline approval, message/reply, broadcast, task lifecycle, restart and reconnect.
+- [ ] Verify installation and normal use need no developer explanation, external setup terminal, IDs/tokens/files or dashboard detours. Document exact prerequisites and limitations that remain.
+
+Verification: save concise evidence for each flow. A mock assistant proves process plumbing only; separately verify a real signed-in Codex answer. Do not claim a physical Windows/EC2 run from local-only tests.
+
+### 15. Package and ship the complete prototype
+
+- [ ] Update README/install instructions to the actual conversation flow and five commands, including literal `/crewai` launch, setup and upgrade behavior.
+- [ ] Build Windows/Linux release packages including the new entry/session integration. Preserve existing data and working Herdr behavior; no source build is required on the user's device.
+- [ ] Publish authorized source/release updates, download both packages, verify checksums/version and smoke-test their actual entry and core flows.
+- [ ] Record what is implemented, tested and pending; update task checkboxes only with evidence and confirm that the shipped UI matches the saved references.
+
+Verification: the user can install on Windows and Linux, enter `/crewai`, and complete question/message/task/broadcast workflows using the published binaries.
+
+## Definition of done
+
+All five commands perform real operations. `/crewai` opens inside Herdr, `/` and `@` make the interface discoverable, answers and human replies appear in context, approvals work beside the correct question, and no normal flow depends on the old dashboard. The Windows/Linux manager-teammate run is verified; restart preserves data; private messages are recipient-only; trust and execution boundaries remain intact. No placeholder success messages, fabricated answers or UI-only skeleton qualify as completion.
+
+## Completion notes
+
+For every numbered task, append: what changed; the verification commands/manual steps and observed results; known limitations. If blocked, leave the item unchecked and record the exact missing prerequisite and next action. Current state: plan and references prepared only; all implementation items remain pending.
+# Release snapshot (v0.2.2)
+
+The conversational workspace, guided team setup, tasks, broadcasts, direct
+messages, and project-question flows are being packaged for prototype testing.
+Relay type checking and its 12 tests passed. The Windows-to-EC2 user journey
+and Linux terminal integration still require testing on the actual devices;
+the unchecked items below remain open. Codex execution is best-effort and is
+not protected by an operating-system read-only boundary.
+
