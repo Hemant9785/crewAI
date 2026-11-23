@@ -11,6 +11,10 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 - [x] **7. Milestone verification.** Typecheck, unit/engine/UI tests, Firestore rules contract tests on the emulator, build, manual run on a real terminal.
 - [ ] **8. Ship crewai 0.3.2.** Test the self-updater, verify Windows replacement, document `--update` and `doctor`, bump the app version, push `main`, tag `crewai-v0.3.2`, and verify all five release assets plus a real 0.3.1-to-0.3.2 update.
 
+Release progress (2026-11-23): Added updater coverage for rate-limit feed fallback, up-to-date and dry-run behavior, checksum rejection, and version validation before replacement. Verification passed: `npm.cmd exec -- vitest run` (124 tests), `npm.cmd exec -- tsc --noEmit`, and `npm.cmd run build`. A disposable Windows 0.3.1 executable updated itself from local 0.3.2 release assets, verified the checksum/version, replaced the running image, reported 0.3.2, and removed `.old` on the next start. README documents update and doctor; package and lockfile are 0.3.2. The changes are in local commit `e8f7ddf`.
+
+Blocked release actions: `git push origin main` was rejected by automatic approval review because it would publish the repository's private contents and mutate shared `main`; the reviewer requires explicit authorization naming the destination and payload. No push or release tag was made. Next action: obtain approval to push the local release commits to `https://github.com/Hemant9785/crewAI` on `main`, then push `crewai-v0.3.2`, monitor all five builds, and test an installed 0.3.1 binary against the real release. The visual flicker fix also remains unconfirmed by eye in the owner's terminal; the automated terminal replay test passed earlier.
+
 ## Completion notes (2026-11-23)
 
 **What changed**
