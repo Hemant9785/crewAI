@@ -13,6 +13,8 @@ import { build } from 'esbuild';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
+// CREWAI_BUILD_VERSION lets tests build an "older" binary to try the updater with.
+const buildVersion = process.env.CREWAI_BUILD_VERSION || pkg.version;
 const os = { win32: 'windows', darwin: 'macos', linux: 'linux' }[process.platform];
 if (!os) throw new Error(`Unsupported platform ${process.platform}`);
 const arch = process.arch === 'arm64' ? 'arm64' : process.arch === 'x64' ? 'x64' : null;
@@ -71,7 +73,7 @@ await build({
     js: "import { createRequire as __crewaiCreateRequire } from 'node:module'; const require = __crewaiCreateRequire(import.meta.url);",
   },
   define: {
-    __CREWAI_VERSION__: JSON.stringify(pkg.version),
+    __CREWAI_VERSION__: JSON.stringify(buildVersion),
     __CREWAI_FIREBASE__: embedFirebase ? JSON.stringify(JSON.stringify(fb)) : 'undefined',
     'process.env.NODE_ENV': '"production"',
   },

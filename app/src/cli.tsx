@@ -6,12 +6,14 @@ import { realAgentRunner } from './agents.js';
 import type { Backend } from './backend.js';
 import { LocalStore } from './config.js';
 import { createDemo } from './demo.js';
+import { collectDoctor } from './doctor.js';
 import type { Engine } from './engine.js';
 import { FirebaseBackend } from './firebaseBackend.js';
 import { SETUP_HINT, firebaseSource, loadFirebaseSettings } from './firebaseConfig.js';
 import { App } from './ui/App.js';
 import { withFrameWriter } from './ui/frameStream.js';
 import { formatCode } from './format.js';
+import { cleanupAfterUpdate, latestTag, realFetcher, runUpdate } from './update.js';
 
 /** Replaced at build time by scripts/build-binary.mjs for the standalone binaries. */
 declare const __CREWAI_VERSION__: string | undefined;
@@ -29,9 +31,12 @@ const HELP = `crewai ${version()}
 
 Team chat for coding agents. Run it in a project folder.
 
-  crewai            open the chat
-  crewai --demo     try it with simulated teammates (no account needed)
-  crewai --check    check the connection to your team service
+  crewai              open the chat
+  crewai --update     update crewai to the latest release (also: crewai update)
+  crewai update --dry-run   only check whether an update is available
+  crewai doctor       show version, install location, agents, service and update status
+  crewai --demo       try it with simulated teammates (no account needed)
+  crewai --check      check the connection to your team service
   crewai --version
 
 Inside the chat: /read  /task  /broadcast  /tasks  /team  /agent  /new  /help
@@ -51,6 +56,51 @@ async function main(): Promise<number> {
     // Offline check of where the team service settings come from (used by the release smoke test).
     process.stdout.write(`firebase config: ${firebaseSource(new LocalStore().dir)}\n`);
     return 0;
+  }
+
+  cleanupAfterUpdate();
+  const first = args[0];
+  if (args.includes('--update') || first === 'update') {
+    const result = await runUpdate({
+      current: version(),
+      dryRun: args.includes('--dry-run') || args.includes('--check-update'),
+      log: (line) => process.stdout.write(`${line}\n`),
+    });
+    (result.status === 'error' ? process.stderr : process.stdout).write(`${result.message}\n`);
+    return result.status === 'error' ? 1 : 0;
+  }
+  if (args.includes('--doctor') || first === 'doctor') {
+    const dstore = new LocalStore();
+    const envPath = join(dstore.dir, '.env');
+    if (existsSync(envPath)) {
+      try {
+        process.loadEnvFile(envPath);
+      } catch {
+        /* ignore a malformed file */
+      }
+    }
+    const cfg = loadFirebaseSettings(dstore.dir);
+    const report = await collectDoctor({
+      version: version(),
+      execPath: process.execPath,
+      dataDir: dstore.dir,
+      teamName: dstore.settings().teamName,
+      agentPref: dstore.settings().agent,
+      detectAgents: () => realAgentRunner.detect(),
+      service: cfg
+        ? {
+            project: cfg.projectId,
+            source: firebaseSource(dstore.dir),
+            connect: async () => {
+              const b = await FirebaseBackend.connect(cfg, dstore.identity());
+              await b.close();
+            },
+          }
+        : null,
+      latestTag: () => latestTag(realFetcher),
+    });
+    process.stdout.write(`${report.lines.join('\n')}\n`);
+    return report.ok ? 0 : 1;
   }
 
   const demo = args.includes('--demo');
