@@ -1,0 +1,173 @@
+rules_version = '2';
+
+// crewAI team data. Membership documents are the source of truth for access.
+// Repository files are never stored here; only team records and bounded answers.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null; }
+    function teamPath(teamId) { return /databases/$(database)/documents/teams/$(teamId); }
+    function memberPath(teamId, uid) { return /databases/$(database)/documents/teams/$(teamId)/members/$(uid); }
+    function namePath(teamId, n) { return /databases/$(database)/documents/teams/$(teamId)/names/$(n); }
+    function invitePath(code) { return /databases/$(database)/documents/invites/$(code); }
+
+    function isMember(teamId) { return signedIn() && exists(memberPath(teamId, request.auth.uid)); }
+    function me(teamId) { return get(memberPath(teamId, request.auth.uid)).data; }
+    function isManager(teamId) { return isMember(teamId) && me(teamId).role == 'manager'; }
+    function okText(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
+    function okName(v) { return v is string && v.matches('^[A-Za-z0-9_.-]{1,40}$'); }
+    function changed(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+
+    function inviteOk(teamId, code) {
+      return code is string && code.matches('^[0-9]{6}$')
+        && get(invitePath(code)).data.teamId == teamId
+        && get(invitePath(code)).data.used == false
+        && get(invitePath(code)).data.expiresAt > request.time.toMillis()
+        && getAfter(invitePath(code)).data.used == true;
+    }
+
+    // Invite codes: a manager creates one; a joiner claims it once (see members create).
+    match /invites/{code} {
+      allow get: if signedIn() && code.matches('^[0-9]{6}$');
+      allow create: if signedIn() && code.matches('^[0-9]{6}$')
+        && request.resource.data.keys().hasOnly(['teamId', 'createdBy', 'expiresAt', 'used'])
+        && isManager(request.resource.data.teamId)
+        && request.resource.data.createdBy == request.auth.uid
+        && request.resource.data.used == false
+        && request.resource.data.expiresAt is number
+        && request.resource.data.expiresAt > request.time.toMillis()
+        && request.resource.data.expiresAt <= request.time.toMillis() + 900000;
+      allow update: if signedIn()
+        && resource.data.used == false
+        && resource.data.expiresAt > request.time.toMillis()
+        && changed(['used'])
+        && request.resource.data.used == true;
+    }
+
+    match /teams/{teamId} {
+      allow get: if isMember(teamId);
+      allow create: if signedIn()
+        && request.resource.data.keys().hasOnly(['name', 'ownerUid', 'createdAt', 'taskSeq'])
+        && request.resource.data.ownerUid == request.auth.uid
+        && okText(request.resource.data.name, 40)
+        && request.resource.data.taskSeq == 0
+        && request.resource.data.createdAt is number;
+      allow update: if isMember(teamId)
+        && changed(['taskSeq'])
+        && request.resource.data.taskSeq == resource.data.taskSeq + 1;
+
+      match /names/{n} {
+        allow read: if isMember(teamId);
+        allow create: if signedIn()
+          && request.resource.data.keys().hasOnly(['uid', 'name'])
+          && request.resource.data.uid == request.auth.uid
+          && okName(request.resource.data.name)
+          && n == request.resource.data.name.lower();
+      }
+
+      match /members/{uid} {
+        allow read: if isMember(teamId);
+        allow create: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['name', 'role', 'lastSeen', 'agent', 'project', 'joinedAt', 'inviteCode'])
+          && okName(request.resource.data.name)
+          && request.resource.data.lastSeen == request.time
+          && request.resource.data.agent == null
+          && request.resource.data.project == ''
+          && existsAfter(namePath(teamId, request.resource.data.name.lower()))
+          && getAfter(namePath(teamId, request.resource.data.name.lower())).data.uid == uid
+          && (
+            (request.resource.data.role == 'manager'
+              && !exists(teamPath(teamId))
+              && getAfter(teamPath(teamId)).data.ownerUid == uid)
+            ||
+            (request.resource.data.role == 'member'
+              && inviteOk(teamId, request.resource.data.inviteCode))
+          );
+        allow update: if signedIn() && request.auth.uid == uid
+          && changed(['lastSeen', 'agent', 'project'])
+          && request.resource.data.lastSeen == request.time
+          && (request.resource.data.agent == null || request.resource.data.agent in ['codex', 'claude'])
+          && request.resource.data.project is string
+          && request.resource.data.project.size() <= 120;
+      }
+
+      match /broadcasts/{id} {
+        allow read: if isMember(teamId);
+        allow create: if isMember(teamId)
+          && request.resource.data.keys().hasOnly(['fromUid', 'fromName', 'text', 'createdAt'])
+          && request.resource.data.fromUid == request.auth.uid
+          && request.resource.data.fromName == me(teamId).name
+          && okText(request.resource.data.text, 2000)
+          && request.resource.data.createdAt is number;
+      }
+
+      match /tasks/{id} {
+        allow read: if isMember(teamId);
+        allow create: if isMember(teamId)
+          && request.resource.data.keys().hasOnly(['num', 'assigneeUid', 'assigneeName', 'assignerUid', 'assignerName', 'text', 'status', 'note', 'createdAt', 'updatedAt'])
+          && request.resource.data.assignerUid == request.auth.uid
+          && request.resource.data.assignerName == me(teamId).name
+          && exists(memberPath(teamId, request.resource.data.assigneeUid))
+          && get(memberPath(teamId, request.resource.data.assigneeUid)).data.name == request.resource.data.assigneeName
+          && okText(request.resource.data.text, 2000)
+          && request.resource.data.status == 'todo'
+          && request.resource.data.note == ''
+          && request.resource.data.num == getAfter(teamPath(teamId)).data.taskSeq;
+        allow update: if isMember(teamId)
+          && (resource.data.assigneeUid == request.auth.uid
+              || resource.data.assignerUid == request.auth.uid
+              || isManager(teamId))
+          && changed(['status', 'note', 'updatedAt'])
+          && request.resource.data.status in ['todo', 'in_progress', 'done', 'cancelled', 'needs_help']
+          && request.resource.data.note is string
+          && request.resource.data.note.size() <= 300;
+      }
+
+      // A question has exactly one owner at a time. Only the asker, the current target
+      // and previous targets (so they can learn it moved) can read it.
+      match /requests/{id} {
+        allow read: if isMember(teamId)
+          && (resource.data.askerUid == request.auth.uid
+              || resource.data.targetUid == request.auth.uid
+              || request.auth.uid in resource.data.movedFrom);
+        allow create: if isMember(teamId)
+          && request.resource.data.keys().hasOnly(['askerUid', 'askerName', 'targetUid', 'targetName', 'question', 'status', 'answer', 'agent', 'error', 'movedFrom', 'createdAt', 'updatedAt'])
+          && request.resource.data.askerUid == request.auth.uid
+          && request.resource.data.askerName == me(teamId).name
+          && exists(memberPath(teamId, request.resource.data.targetUid))
+          && get(memberPath(teamId, request.resource.data.targetUid)).data.name == request.resource.data.targetName
+          && okText(request.resource.data.question, 2000)
+          && request.resource.data.status == 'pending'
+          && request.resource.data.answer == ''
+          && request.resource.data.agent == ''
+          && request.resource.data.error == ''
+          && request.resource.data.movedFrom.size() == 0;
+        allow update: if isMember(teamId) && (
+          // asker moves a still-pending question to someone else
+          (resource.data.askerUid == request.auth.uid
+            && resource.data.status == 'pending'
+            && changed(['targetUid', 'targetName', 'movedFrom', 'updatedAt'])
+            && exists(memberPath(teamId, request.resource.data.targetUid))
+            && get(memberPath(teamId, request.resource.data.targetUid)).data.name == request.resource.data.targetName
+            && request.resource.data.movedFrom == resource.data.movedFrom.concat([resource.data.targetUid]))
+          ||
+          // asker cancels
+          (resource.data.askerUid == request.auth.uid
+            && resource.data.status in ['pending', 'running']
+            && changed(['status', 'updatedAt'])
+            && request.resource.data.status == 'cancelled')
+          ||
+          // current target consents, answers, declines or fails
+          (resource.data.targetUid == request.auth.uid
+            && resource.data.status in ['pending', 'running']
+            && changed(['status', 'answer', 'agent', 'error', 'updatedAt'])
+            && request.resource.data.status in ['running', 'answered', 'declined', 'failed']
+            && (request.resource.data.status != 'running' || resource.data.status == 'pending')
+            && request.resource.data.answer is string && request.resource.data.answer.size() <= 8000
+            && request.resource.data.agent is string && request.resource.data.agent.size() <= 20
+            && request.resource.data.error is string && request.resource.data.error.size() <= 300)
+        );
+      }
+    }
+  }
+}

@@ -1,0 +1,37 @@
+{
+  "name": "crewai",
+  "version": "0.1.0",
+  "description": "Team chat for coding agents, in your terminal",
+  "type": "module",
+  "bin": {
+    "crewai": "dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.tsx",
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "deploy:rules": "firebase deploy --only firestore",
+    "emulators": "firebase emulators:exec --only firestore,auth --project demo-crewai \"vitest run --config vitest.rules.config.ts\""
+  },
+  "license": "UNLICENSED",
+  "private": true,
+  "dependencies": {
+    "firebase": "^13.4.0",
+    "ink": "^6.8.0",
+    "react": "^19.3.1"
+  },
+  "devDependencies": {
+    "@firebase/rules-unit-testing": "^6.0.0",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "firebase-tools": "^13.35.1",
+    "ink-testing-library": "^4.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.1.1"
+  }
+}

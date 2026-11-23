@@ -1,0 +1,109 @@
+import { LIMITS, type Member } from './types.js';
+
+export interface CommandInfo {
+  name: string;
+  usage: string;
+  desc: string;
+}
+
+export const COMMANDS: CommandInfo[] = [
+  { name: 'read', usage: '/read [@name] question', desc: 'ask a project (add @name for a teammate)' },
+  { name: 'task', usage: '/task @name… what to do', desc: 'assign work to one or more people' },
+  { name: 'broadcast', usage: '/broadcast message', desc: 'message the whole team' },
+  { name: 'tasks', usage: '/tasks', desc: 'open the task board' },
+  { name: 'team', usage: '/team [invite]', desc: 'people and invites' },
+  { name: 'agent', usage: '/agent [codex|claude|auto]', desc: 'switch your coding agent' },
+  { name: 'new', usage: '/new', desc: 'start a new chat' },
+  { name: 'help', usage: '/help', desc: 'show commands' },
+  { name: 'quit', usage: '/quit', desc: 'leave crewai' },
+];
+
+export type Parsed =
+  | { kind: 'read'; question: string; target?: string }
+  | { kind: 'task'; assignees: string[]; text: string }
+  | { kind: 'broadcast'; text: string }
+  | { kind: 'tasks' }
+  | { kind: 'team'; sub?: string }
+  | { kind: 'agent'; name?: string }
+  | { kind: 'new' | 'help' | 'quit' }
+  | { kind: 'ask'; text: string }
+  | { kind: 'empty' }
+  | { kind: 'error'; message: string };
+
+const MENTION = /@([\w.-]+)/g;
+
+export function parseInput(raw: string): Parsed {
+  const input = raw.trim();
+  if (!input) return { kind: 'empty' };
+  if (input.length > LIMITS.text) {
+    return { kind: 'error', message: `That's too long (max ${LIMITS.text} characters).` };
+  }
+  if (!input.startsWith('/')) return { kind: 'ask', text: input };
+
+  const m = /^\/(\S*)\s*([\s\S]*)$/.exec(input)!;
+  const name = (m[1] ?? '').toLowerCase();
+  const rest = (m[2] ?? '').trim();
+
+  switch (name) {
+    case 'read': {
+      const mentions = [...rest.matchAll(MENTION)].map((x) => x[1]!);
+      if (mentions.length > 1) {
+        return { kind: 'error', message: 'Ask one teammate at a time, for example /read @hemant question.' };
+      }
+      const question = rest.replace(MENTION, ' ').replace(/\s+/g, ' ').trim();
+      if (!question) return { kind: 'error', message: 'Add a question after /read.' };
+      return { kind: 'read', question, target: mentions[0] };
+    }
+    case 'task': {
+      const lead = /^((?:@[\w.-]+\s+)+)([\s\S]*)$/.exec(rest);
+      if (!lead) return { kind: 'error', message: 'Start with who it is for: /task @name what to do.' };
+      const assignees = [...lead[1]!.matchAll(MENTION)].map((x) => x[1]!);
+      const text = lead[2]!.trim();
+      if (!text) return { kind: 'error', message: 'Add what needs doing after the names.' };
+      return { kind: 'task', assignees: [...new Set(assignees.map((a) => a.toLowerCase()))], text };
+    }
+    case 'broadcast':
+      if (!rest) return { kind: 'error', message: 'Add a message after /broadcast.' };
+      return { kind: 'broadcast', text: rest };
+    case 'tasks':
+      return { kind: 'tasks' };
+    case 'team':
+      return { kind: 'team', sub: rest.toLowerCase() || undefined };
+    case 'agent':
+      return { kind: 'agent', name: rest.toLowerCase() || undefined };
+    case 'new':
+    case 'help':
+      return { kind: name };
+    case 'quit':
+    case 'exit':
+      return { kind: 'quit' };
+    default:
+      return { kind: 'error', message: `Unknown command /${name}. Type / to see commands.` };
+  }
+}
+
+export type Resolved = { member: Member } | { error: string };
+
+/** Case-insensitive exact match first, then a unique prefix. */
+export function resolveMention(name: string, members: Member[]): Resolved {
+  const key = (s: string) => mentionName(s).toLowerCase();
+  const q = key(name);
+  const exact = members.filter((x) => key(x.name) === q);
+  if (exact.length === 1) return { member: exact[0]! };
+  if (exact.length > 1) return { error: `More than one person is called ${name}.` };
+  const prefix = members.filter((x) => key(x.name).startsWith(q));
+  if (prefix.length === 1) return { member: prefix[0]! };
+  if (prefix.length > 1) return { error: `${name} could be ${prefix.map((p) => p.name).join(' or ')}.` };
+  return { error: `Nobody called ${name} is in this team.` };
+}
+
+/** Current @-token being typed at the end of the composer, if any. */
+export function activeMention(text: string): { query: string; start: number } | null {
+  const m = /(^|\s)@([\w.-]*)$/.exec(text);
+  if (!m) return null;
+  return { query: m[2]!, start: text.length - m[2]!.length - 1 };
+}
+
+export function mentionName(name: string): string {
+  return name.replace(/\s+/g, '_');
+}

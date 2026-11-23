@@ -1,5 +1,11 @@
 # crewAI
 
+> **New direction (2026-11-23):** crewAI is being rebuilt as a standalone `crewai`
+> chat command in [`app/`](app/) (TypeScript, Firebase). See
+> [conversation_context.md](conversation_context.md) and [tasks.md](tasks.md).
+> The Herdr fork (`herdr/`), Cloudflare relay (`relay/`) and their docs below
+> are kept unchanged as the legacy prototype.
+
 crewAI is a terminal-first team coding assistant built on top of Herdr. It
 combines local team coordination, signed task and broadcast records,
 permission-aware repository requests, and bounded agent execution.
