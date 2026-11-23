@@ -40,6 +40,10 @@ const fb = {
   appId: env.CREWAI_FIREBASE_APP_ID,
 };
 const embedFirebase = Boolean(fb.projectId && fb.apiKey);
+if (!embedFirebase && env.CREWAI_REQUIRE_FIREBASE === '1') {
+  throw new Error('CREWAI_REQUIRE_FIREBASE is set but CREWAI_FIREBASE_PROJECT_ID / CREWAI_FIREBASE_API_KEY are empty. ' +
+    'Set them as repository variables before publishing a release.');
+}
 console.log(embedFirebase ? `Embedding Firebase project ${fb.projectId}` : 'No Firebase config set: users must provide their own.');
 
 const exe = process.platform === 'win32' ? '.exe' : '';

@@ -11,7 +11,7 @@ export const COMMANDS: CommandInfo[] = [
   { name: 'task', usage: '/task @name… what to do', desc: 'assign work to one or more people' },
   { name: 'broadcast', usage: '/broadcast message', desc: 'message the whole team' },
   { name: 'tasks', usage: '/tasks', desc: 'open the task board' },
-  { name: 'team', usage: '/team [invite]', desc: 'people and invites' },
+  { name: 'team', usage: '/team [invite|leave]', desc: 'people, invites, leaving' },
   { name: 'agent', usage: '/agent [codex|claude|auto]', desc: 'switch your coding agent' },
   { name: 'new', usage: '/new', desc: 'start a new chat' },
   { name: 'help', usage: '/help', desc: 'show commands' },
@@ -23,7 +23,7 @@ export type Parsed =
   | { kind: 'task'; assignees: string[]; text: string }
   | { kind: 'broadcast'; text: string }
   | { kind: 'tasks' }
-  | { kind: 'team'; sub?: string }
+  | { kind: 'team'; sub?: string; target?: string }
   | { kind: 'agent'; name?: string }
   | { kind: 'new' | 'help' | 'quit' }
   | { kind: 'ask'; text: string }
@@ -31,6 +31,8 @@ export type Parsed =
   | { kind: 'error'; message: string };
 
 const MENTION = /@([\w.-]+)/g;
+/** A mention starts a word, so "ops@example.com" is not one. */
+const WORD_MENTION = /(^|\s)@([\w.-]+)/g;
 
 export function parseInput(raw: string): Parsed {
   const input = raw.trim();
@@ -46,29 +48,35 @@ export function parseInput(raw: string): Parsed {
 
   switch (name) {
     case 'read': {
-      const mentions = [...rest.matchAll(MENTION)].map((x) => x[1]!);
+      const mentions = [...rest.matchAll(WORD_MENTION)].map((x) => x[2]!);
       if (mentions.length > 1) {
         return { kind: 'error', message: 'Ask one teammate at a time, for example /read @hemant question.' };
       }
-      const question = rest.replace(MENTION, ' ').replace(/\s+/g, ' ').trim();
+      const question = rest.replace(WORD_MENTION, '$1').replace(/\s+/g, ' ').trim();
       if (!question) return { kind: 'error', message: 'Add a question after /read.' };
       return { kind: 'read', question, target: mentions[0] };
     }
     case 'task': {
-      const lead = /^((?:@[\w.-]+\s+)+)([\s\S]*)$/.exec(rest);
+      const lead = /^((?:@[\w.-]+(?:\s+|$))+)([\s\S]*)$/.exec(rest);
       if (!lead) return { kind: 'error', message: 'Start with who it is for: /task @name what to do.' };
-      const assignees = [...lead[1]!.matchAll(MENTION)].map((x) => x[1]!);
+      const assignees = [...new Set([...lead[1]!.matchAll(MENTION)].map((x) => x[1]!.toLowerCase()))];
       const text = lead[2]!.trim();
-      if (!text) return { kind: 'error', message: 'Add what needs doing after the names.' };
-      return { kind: 'task', assignees: [...new Set(assignees.map((a) => a.toLowerCase()))], text };
+      if (!text) return { kind: 'error', message: 'Add what needs doing after the names: /task @name what to do.' };
+      if (assignees.length > LIMITS.assignees) {
+        return { kind: 'error', message: `Assign at most ${LIMITS.assignees} people at once.` };
+      }
+      return { kind: 'task', assignees, text };
     }
     case 'broadcast':
       if (!rest) return { kind: 'error', message: 'Add a message after /broadcast.' };
       return { kind: 'broadcast', text: rest };
     case 'tasks':
       return { kind: 'tasks' };
-    case 'team':
-      return { kind: 'team', sub: rest.toLowerCase() || undefined };
+    case 'team': {
+      const [sub, ...more] = rest.split(/\s+/).filter(Boolean);
+      const target = more.join(' ').replace(/^@/, '') || undefined;
+      return { kind: 'team', sub: sub?.toLowerCase(), target };
+    }
     case 'agent':
       return { kind: 'agent', name: rest.toLowerCase() || undefined };
     case 'new':

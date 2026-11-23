@@ -17,10 +17,12 @@ export function Resume({
   const s = useEngine(engine);
   const approvals = s.attention.filter((a) => a.type === 'consent').length;
   const myTasks = s.tasks.filter((t) => t.assigneeUid === s.me?.uid && t.status === 'todo').length;
+  const answers = engine.unseenAnswers();
   const needs: string[] = [];
   if (approvals) needs.push(`${approvals} approval${approvals > 1 ? 's' : ''}`);
   if (myTasks) needs.push(`${myTasks} new task${myTasks > 1 ? 's' : ''}`);
-  const total = approvals + myTasks;
+  if (answers) needs.push(`${answers} new answer${answers > 1 ? 's' : ''} (shown in any chat you open)`);
+  const total = approvals + myTasks + answers;
 
   return (
     <Box flexDirection="column" marginTop={1}>

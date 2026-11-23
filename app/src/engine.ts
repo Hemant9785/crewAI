@@ -1,8 +1,9 @@
+import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
-import { pickAgent, type AgentRunner } from './agents.js';
+import { pickAgent, redactSecrets, type AgentRunner } from './agents.js';
 import { BackendError, type Backend, type Unsubscribe } from './backend.js';
 import { COMMANDS, parseInput, resolveMention } from './commands.js';
-import { appendEntry, type Entry, type EntryKind, type LocalStore, type Session } from './config.js';
+import { ALLOW_DAYS, appendEntry, type Entry, type EntryKind, type LocalStore, type Session } from './config.js';
 import { ago, clip, formatCode } from './format.js';
 import {
   HEARTBEAT_MS,
@@ -45,6 +46,8 @@ export interface EngineState {
   busy: string;
   now: number;
   error: string;
+  /** False when another crewai window on this laptop answers teammates' questions. */
+  responder: boolean;
 }
 
 /** `keepDraft` tells the UI to put the text back in the message box because nothing was sent. */
@@ -78,16 +81,23 @@ export class Engine {
   private lastDetect = 0;
   private counter = 0;
   private stopped = false;
+  private readonly lockToken = randomBytes(8).toString('hex');
 
   constructor(private d: EngineDeps) {
     this.s = {
       ready: false, team: null, me: null, members: [], tasks: [], broadcasts: [], requests: [], entries: [],
       agent: null, available: [], pref: d.store.settings().agent, attention: [], busy: '', now: this.now(), error: '',
+      responder: false,
     };
   }
 
+  /** Server time (estimated). Event times come from the server, so compare against this, not the local clock. */
   private now(): number {
-    return this.d.now?.() ?? Date.now();
+    return this.d.now?.() ?? this.d.backend.serverNow();
+  }
+  /** Current time on the team service's clock, for choosing where a new chat starts. */
+  time(): number {
+    return this.now();
   }
   get state(): EngineState {
     return this.s;
@@ -105,8 +115,15 @@ export class Engine {
 
   async start(team: Team): Promise<void> {
     const b = this.d.backend;
-    b.onError = (e) => this.emit({ error: e.message });
-    this.s = { ...this.s, team };
+    b.onError = (e) => this.emit({
+      error: e.code === 'permission-denied'
+        ? 'You no longer have access to this team (you may have been removed). Restart crewai to join a team.'
+        : e.message,
+    });
+    this.s = { ...this.s, team, responder: this.d.store.claimResponder(this.lockToken) };
+    // Answers to my questions that arrive from now on count as unseen until a chat shows them.
+    const seen = this.d.store.settings().answersSeenAt;
+    if (seen[team.id] === undefined) this.d.store.saveSettings({ answersSeenAt: { ...seen, [team.id]: this.now() } });
     await this.refreshAgents(true);
     await this.heartbeat();
     const raw: { members: Member[]; tasks: Task[]; broadcasts: Broadcast[]; requests: ReadRequest[] } = {
@@ -137,6 +154,7 @@ export class Engine {
     this.unsubs = [];
     this.timers = [];
     await this.queue.catch(() => {});
+    this.d.store.releaseResponder(this.lockToken);
   }
 
   /** Begin writing to a session. `since` limits which team events are replayed into it. */
@@ -144,16 +162,25 @@ export class Engine {
     this.session = session;
     this.since = since;
     this.emit({ entries: [...session.entries] });
+    if (!this.s.responder) {
+      this.sys('Another crewai window on this laptop answers teammates\' questions, so this one will not. Close it to answer here.');
+    }
     this.recompute();
   }
 
   async tick(): Promise<void> {
+    if (!this.s.responder && !this.stopped && this.d.store.claimResponder(this.lockToken)) {
+      this.emit({ responder: true });
+      this.sys('This window now answers teammates\' questions.');
+      void this.heartbeat();
+    }
     this.recompute();
   }
 
   async heartbeat(): Promise<void> {
     const team = this.s.team;
-    if (!team || this.stopped) return;
+    // Only the window that answers questions reports presence, so teammates see the right project.
+    if (!team || this.stopped || !this.s.responder) return;
     try {
       await this.d.backend.heartbeat(team.id, { agent: this.s.agent, project: basename(this.d.folder) });
     } catch (e) {
@@ -209,6 +236,12 @@ export class Engine {
   private deriveEntries(me: Member): void {
     const s = this.s;
     const since = this.since;
+    const team = s.team;
+    // Outcomes of my own questions are shown if no chat has shown them yet, even if they arrived
+    // while crewai was closed or before this chat started.
+    const seenAt = team ? this.d.store.settings().answersSeenAt[team.id] : undefined;
+    const answersSince = seenAt === undefined ? since : Math.min(since, seenAt + 1);
+    let newestAnswer = seenAt ?? -Infinity;
     const fresh: { at: number; kind: EntryKind; who: string; text: string; key: string; meta?: string }[] = [];
 
     for (const m of s.members) {
@@ -232,20 +265,23 @@ export class Engine {
         const who = t.assigneeUid === me.uid ? 'You' : t.assigneeName;
         fresh.push({
           at: t.updatedAt, kind: 'task', who: '',
-          text: `${who} ${STATUS_WORD[t.status]} T-${t.num}${t.note ? ` — ${t.note}` : ''}`, key: `ts:${t.id}:${t.status}`,
+          // The time is part of the key so a status that comes back later (started again) is shown again.
+          text: `${who} ${STATUS_WORD[t.status]} T-${t.num}${t.note ? ` — ${t.note}` : ''}`, key: `ts:${t.id}:${t.status}:${t.updatedAt}`,
         });
       }
     }
     for (const r of s.requests) {
       if (r.askerUid === me.uid) {
-        if (r.status === 'answered' && r.updatedAt >= since) {
+        const outcome = r.status === 'answered' || r.status === 'declined' || r.status === 'failed';
+        if (outcome && r.updatedAt >= answersSince) newestAnswer = Math.max(newestAnswer, r.updatedAt);
+        if (r.status === 'answered' && r.updatedAt >= answersSince) {
           fresh.push({
             at: r.updatedAt, kind: 'agent', who: `${r.targetName}'s ${r.agent || 'agent'}`, text: r.answer, key: `ra:${r.id}`,
             meta: `answered from ${r.targetName}'s laptop`,
           });
-        } else if (r.status === 'declined' && r.updatedAt >= since) {
+        } else if (r.status === 'declined' && r.updatedAt >= answersSince) {
           fresh.push({ at: r.updatedAt, kind: 'system', who: '', text: `${r.targetName} declined your question.`, key: `rd:${r.id}` });
-        } else if (r.status === 'failed' && r.updatedAt >= since) {
+        } else if (r.status === 'failed' && r.updatedAt >= answersSince) {
           fresh.push({
             at: r.updatedAt, kind: 'system', who: '',
             text: `${r.targetName}'s agent couldn't answer${r.error ? `: ${r.error}` : '.'}`, key: `rf:${r.id}`,
@@ -262,13 +298,29 @@ export class Engine {
     }
     fresh.sort((a, b) => a.at - b.at);
     for (const f of fresh) this.log(f.kind, f.who, f.text, f.key, f.at, f.meta);
+    if (team && newestAnswer > (seenAt ?? -Infinity)) {
+      const all = this.d.store.settings().answersSeenAt;
+      this.d.store.saveSettings({ answersSeenAt: { ...all, [team.id]: newestAnswer } });
+    }
+  }
+
+  /** Answers (or declines and failures) to my questions that no chat has shown yet. */
+  unseenAnswers(): number {
+    const team = this.s.team;
+    const me = this.s.me;
+    if (!team || !me) return 0;
+    const seenAt = this.d.store.settings().answersSeenAt[team.id] ?? Infinity;
+    return this.s.requests.filter(
+      (r) => r.askerUid === me.uid && (r.status === 'answered' || r.status === 'declined' || r.status === 'failed') && r.updatedAt > seenAt,
+    ).length;
   }
 
   // ───────────────────────── incoming questions (this laptop is the target)
 
   private handleIncoming(me: Member): void {
     const team = this.s.team;
-    if (!team) return;
+    // Another window on this laptop (same account) answers; doing it here too would race it.
+    if (!team || !this.s.responder) return;
     for (const r of this.s.requests) {
       if (r.targetUid !== me.uid || this.handled.has(r.id)) continue;
       if (r.status === 'running') {
@@ -290,7 +342,7 @@ export class Engine {
       }
       if (this.d.store.isAlwaysAllowed(team.id, r.askerUid)) {
         this.handled.add(r.id);
-        this.sys(`${r.askerName} asked about your project (always allowed).`);
+        this.sys(`${r.askerName} asked about your project (allowed without asking).`);
         this.enqueue(r);
       }
     }
@@ -314,11 +366,16 @@ export class Engine {
       this.emit({ busy: `Answering ${r.askerName}'s question with ${agent}…` });
       const result = await this.d.runner.run(agent, r.question, this.d.folder);
       this.emit({ busy: '' });
+      // Strip anything that looks like a credential before the answer leaves this laptop.
+      const clean = result.ok ? redactSecrets(result.text) : { text: result.text, count: 0 };
       await this.d.backend.respondRequest(
         team.id, r.id,
-        result.ok ? { status: 'answered', answer: result.text, agent } : { status: 'failed', error: result.text, agent },
+        result.ok ? { status: 'answered', answer: clean.text, agent } : { status: 'failed', error: result.text, agent },
       );
       this.sys(result.ok ? `Answered ${r.askerName}'s question.` : `Couldn't answer ${r.askerName}'s question.`);
+      if (clean.count > 0) {
+        this.sys(`Removed ${clean.count} value${clean.count > 1 ? 's' : ''} that looked like secrets from that answer before sending it.`);
+      }
     } catch (e) {
       // Cancelled or moved while running: nothing to report back.
       if (!(e instanceof BackendError && (e.code === 'conflict' || e.code === 'permission-denied'))) {
@@ -346,7 +403,7 @@ export class Engine {
     }
     if (choice === 'always') {
       this.d.store.allowAlways(team.id, r.askerUid);
-      this.sys(`You allowed ${r.askerName}'s question, and will allow future ones from them.`);
+      this.sys(`You allowed ${r.askerName}'s question, and will allow their questions without asking for ${ALLOW_DAYS} days.`);
     } else {
       this.sys(`You allowed ${r.askerName}'s question once.`);
     }
@@ -362,7 +419,7 @@ export class Engine {
     const now = this.now();
     const out: Attention[] = [];
     for (const r of s.requests) {
-      if (r.targetUid === me.uid && r.status === 'pending' && !this.handled.has(r.id)) {
+      if (s.responder && r.targetUid === me.uid && r.status === 'pending' && !this.handled.has(r.id)) {
         out.push({ type: 'consent', request: r });
       }
     }
@@ -417,9 +474,13 @@ export class Engine {
     const team = this.s.team;
     const t = this.s.tasks.find((x) => x.id === taskId);
     if (!team || !t) return;
+    if (t.status === status && note === undefined) {
+      this.sys(`T-${t.num} is already ${STATUS_WORD[status]}.`);
+      return;
+    }
     try {
       await this.d.backend.updateTask(team.id, taskId, { status, note });
-      if (status === 'done') {
+      if (status === 'done' && t.status !== 'done') {
         // Marking a task done tells the whole team.
         await this.d.backend.sendBroadcast(team.id, `✓ T-${t.num} done by ${this.s.me?.name ?? 'someone'}: ${clip(t.text, 120)}`);
       }
@@ -448,7 +509,10 @@ export class Engine {
         case 'tasks':
           return { action: 'tasks' };
         case 'help':
-          this.sys(COMMANDS.map((c) => `${c.usage.padEnd(30)} ${c.desc}`).join('\n') + '\nPlain text asks your own agent about this folder.');
+          this.sys(
+            COMMANDS.map((c) => `${c.usage.padEnd(30)} ${c.desc}`).join('\n') +
+              '\nManagers: /team remove @name, /team promote @name.\nPlain text asks your own agent about this folder.',
+          );
           return {};
         case 'ask':
           return { keepDraft: !(await this.askLocal(p.text)) };
@@ -481,8 +545,7 @@ export class Engine {
           await this.d.backend.sendBroadcast(team.id, p.text);
           return {};
         case 'team':
-          await this.team(p.sub);
-          return {};
+          return await this.team(p.sub, p.target);
         case 'agent':
           await this.agentCommand(p.name);
           return {};
@@ -514,13 +577,42 @@ export class Engine {
     }
   }
 
-  private async team(sub?: string): Promise<void> {
+  private async team(sub?: string, target?: string): Promise<Outcome> {
     const team = this.s.team!;
     const me = this.s.me!;
     if (sub === 'invite') {
       const inv = await this.d.backend.createInvite(team.id);
       this.sys(`Invite code ${formatCode(inv.code)}. It works once and expires in 10 minutes.`);
-      return;
+      return {};
+    }
+    if (sub === 'remove' || sub === 'promote') {
+      if (!target) {
+        this.sys(`Say who: /team ${sub} @name.`);
+        return { keepDraft: true };
+      }
+      const r = resolveMention(target, this.s.members);
+      if ('error' in r) {
+        this.sys(r.error);
+        return { keepDraft: true };
+      }
+      if (sub === 'remove') {
+        await this.d.backend.removeMember(team.id, r.member.uid);
+        this.sys(`Removed ${r.member.name} from ${team.name}. They can no longer see team messages, tasks or ask questions.`);
+      } else {
+        await this.d.backend.promoteMember(team.id, r.member.uid);
+        this.sys(`${r.member.name} is now a manager and can invite and remove people.`);
+      }
+      return {};
+    }
+    if (sub === 'leave') {
+      await this.d.backend.leaveTeam(team.id);
+      this.d.store.forgetTeam(team.id);
+      this.sys(`You left ${team.name}. Run crewai again to join or create a team.`);
+      return { action: 'quit' };
+    }
+    if (sub) {
+      this.sys('Use /team, /team invite, /team leave, /team remove @name or /team promote @name.');
+      return { keepDraft: true };
     }
     const now = this.now();
     const lines = this.s.members.map((m) => {
@@ -531,8 +623,11 @@ export class Engine {
         : `away ${ago(m.lastSeen, now).replace(' ago', '')}`;
       return ` ${dot} ${who.padEnd(18)} ${m.role.padEnd(8)} ${detail}`;
     });
-    const hint = me.role === 'manager' ? '\nType /team invite to add someone.' : '';
-    this.sys(`${team.name} · ${this.s.members.length} people\n${lines.join('\n')}\nEveryone can assign tasks and ask questions. Only managers invite.${hint}`);
+    const hint = me.role === 'manager'
+      ? '\nType /team invite to add someone, /team remove @name to remove someone, /team promote @name to add a manager.'
+      : '\nType /team leave to leave the team.';
+    this.sys(`${team.name} · ${this.s.members.length} people\n${lines.join('\n')}\nEveryone can assign tasks and ask questions. Only managers invite and remove people.${hint}`);
+    return {};
   }
 
   private async agentCommand(name?: string): Promise<void> {

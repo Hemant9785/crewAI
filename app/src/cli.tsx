@@ -8,7 +8,7 @@ import { LocalStore } from './config.js';
 import { createDemo } from './demo.js';
 import type { Engine } from './engine.js';
 import { FirebaseBackend } from './firebaseBackend.js';
-import { SETUP_HINT, loadFirebaseSettings } from './firebaseConfig.js';
+import { SETUP_HINT, firebaseSource, loadFirebaseSettings } from './firebaseConfig.js';
 import { App } from './ui/App.js';
 import { formatCode } from './format.js';
 
@@ -44,6 +44,11 @@ async function main(): Promise<number> {
   }
   if (args.includes('--version') || args.includes('-v')) {
     process.stdout.write(`${version()}\n`);
+    return 0;
+  }
+  if (args.includes('--config-status')) {
+    // Offline check of where the team service settings come from (used by the release smoke test).
+    process.stdout.write(`firebase config: ${firebaseSource(new LocalStore().dir)}\n`);
     return 0;
   }
 

@@ -184,5 +184,50 @@ export function runContract(label: string, make: () => Promise<Harness> | Harnes
       await noData((cb) => bob.subscribeRequests(team.id, cb));
       await h.done?.();
     });
+
+    it('lets a manager remove someone, which frees their name and revokes access', async () => {
+      const { team, join, boss, h } = await setup();
+      const ann = await join('Ann');
+      const bob = await join('Bob');
+      expect(await code(ann.removeMember(team.id, bob.uid))).toBe('permission-denied');
+      expect(await code(boss.removeMember(team.id, boss.uid))).toBe('invalid');
+      await boss.removeMember(team.id, bob.uid);
+      bob.onError = () => {};
+      expect(await code(bob.sendBroadcast(team.id, 'still here?'))).toBe('permission-denied');
+      expect(await code(bob.createRequest(team.id, { targetUid: ann.uid, targetName: 'Ann', question: 'q' }))).toBe('permission-denied');
+      // The name is free again for a new person.
+      await join('Bob');
+      await h.done?.();
+    });
+
+    it('lets a member leave and a manager promote, but never removes the owner', async () => {
+      const { team, join, boss, h } = await setup();
+      const ann = await join('Ann');
+      const bob = await join('Bob');
+      expect(await code(ann.promoteMember(team.id, bob.uid))).toBe('permission-denied');
+      await boss.promoteMember(team.id, ann.uid);
+      expect(await code(ann.removeMember(team.id, boss.uid))).toBe('permission-denied');
+      await ann.removeMember(team.id, bob.uid);
+      expect(await code(boss.leaveTeam(team.id))).toBe('permission-denied');
+      await ann.leaveTeam(team.id);
+      const left = await first<import('../types.js').Member[]>((cb) => boss.subscribeMembers(team.id, cb), (v) => v.length === 1);
+      expect(left.map((m) => m.name)).toEqual(['Boss']);
+      await h.done?.();
+    });
+
+    it('creates tasks for several people all-or-nothing', async () => {
+      const { team, join, boss, h } = await setup();
+      const ann = await join('Ann');
+      const stranger = await h.user();
+      expect(await code(boss.createTasks(team.id, [
+        { assigneeUid: ann.uid, assigneeName: 'Ann', text: 'one' },
+        { assigneeUid: stranger.uid, assigneeName: 'Zed', text: 'two' },
+      ]))).not.toBe('ok');
+      const [t] = await boss.createTasks(team.id, [{ assigneeUid: ann.uid, assigneeName: 'Ann', text: 'three' }]);
+      expect(t!.num).toBe(1);
+      const seen = await first<Task[]>((cb) => ann.subscribeTasks(team.id, cb), (v) => v.length >= 1);
+      expect(seen.map((x) => x.text)).toEqual(['three']);
+      await h.done?.();
+    });
   });
 }

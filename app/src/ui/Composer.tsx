@@ -24,6 +24,8 @@ export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange
   const [cursor, setCursor] = useState(0);
   const [sel, setSel] = useState(0);
   const [hist, setHist] = useState(-1);
+  /** The text for which the user closed the menu with Esc; the menu stays closed until the text changes. */
+  const [closedFor, setClosedFor] = useState<string | null>(null);
   const draft = useRef('');
 
   const slash = /^\/(\S*)$/.exec(value);
@@ -32,7 +34,8 @@ export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange
   const people = mention
     ? members.filter((m) => mentionName(m.name).toLowerCase().startsWith(mention.query.toLowerCase()))
     : [];
-  const open: 'cmd' | 'mention' | null = cmds.length ? 'cmd' : people.length ? 'mention' : null;
+  const menuClosed = closedFor === value;
+  const open: 'cmd' | 'mention' | null = menuClosed ? null : cmds.length ? 'cmd' : people.length ? 'mention' : null;
   const count = open === 'cmd' ? cmds.length : people.length;
   const shown = Math.min(sel, Math.max(0, count - 1));
 
@@ -81,8 +84,12 @@ export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange
       return;
     }
     if (key.escape) {
-      if (open) setSel(0);
-      set('');
+      // Esc closes an open menu and keeps the text (a lone "/" is just the menu, so it goes too).
+      // With no menu open, it clears the box.
+      if (open && value !== '/') {
+        setSel(0);
+        setClosedFor(value);
+      } else set('');
       return;
     }
     if (key.upArrow || key.downArrow) {

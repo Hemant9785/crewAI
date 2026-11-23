@@ -26,6 +26,21 @@ try {
     const tmp = `${file}.${process.pid}.tmp`;
     fs.writeFileSync(tmp, code);
     fs.renameSync(tmp, file);
+    // A new version was unpacked: remove bundles left by older versions so they do not pile up.
+    // One may still be in use by an older window; failures are ignored and retried next upgrade.
+    try {
+      for (const name of fs.readdirSync(path.join(home, 'bin'))) {
+        if (name !== hash && /^[0-9a-f]{16}$/.test(name)) {
+          try {
+            fs.rmSync(path.join(home, 'bin', name), { recursive: true, force: true });
+          } catch {
+            /* in use */
+          }
+        }
+      }
+    } catch {
+      /* nothing to clean */
+    }
   }
   import(pathToFileURL(file).href).catch((e) => {
     process.stderr.write(`crewai failed to start: ${e && e.message ? e.message : e}\n`);

@@ -43,8 +43,16 @@ if [ -z "$base" ]; then
   tag="${CREWAI_VERSION:-}"
   if [ -z "$tag" ]; then
     say "Looking up the latest crewai release..."
+    # Newest crewai-v* release that is neither a draft nor a pre-release (same rule as install-crewai.ps1).
+    # The API prints one field per line, with tag_name before draft and prerelease in each release.
     tag=$(curl -fsSL -H "User-Agent: crewai-installer" "https://api.github.com/repos/$REPO/releases?per_page=30" |
-      grep -o '"tag_name": *"crewai-v[^"]*"' | head -n 1 | sed 's/.*"\(crewai-v[^"]*\)"/\1/') || true
+      awk '
+        /"tag_name":/ { t = $0; sub(/.*"tag_name": *"/, "", t); sub(/".*/, "", t); d = ""; p = "" }
+        /"draft":/ { d = ($0 ~ /true/) ? "true" : "false" }
+        /"prerelease":/ {
+          p = ($0 ~ /true/) ? "true" : "false"
+          if (t ~ /^crewai-v/ && d == "false" && p == "false") { print t; exit }
+        }') || true
     [ -n "$tag" ] || fail "no crewai release was found at https://github.com/$REPO/releases yet."
   fi
   base="https://github.com/$REPO/releases/download/$tag"
@@ -83,12 +91,26 @@ case ":$PATH:" in
 esac
 if [ "$on_path" = 0 ] && [ "${CREWAI_NO_PATH:-0}" != "1" ]; then
   line="export PATH=\"$dir:\$PATH\""
+  # zsh (the macOS default) does not read ~/.profile, so create ~/.zshrc when zsh is in use.
+  uses_zsh=0
+  if [ "$os" = "macos" ]; then uses_zsh=1; fi
+  case "${SHELL:-}" in *zsh) uses_zsh=1 ;; esac
   for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
-    # Only touch files that exist (plus .profile, so there is always one).
-    if [ -f "$rc" ] || [ "$rc" = "$HOME/.profile" ]; then
+    # Touch files that exist, plus .profile (so there is always one) and .zshrc for zsh users.
+    if [ -f "$rc" ] || [ "$rc" = "$HOME/.profile" ] || { [ "$rc" = "$HOME/.zshrc" ] && [ "$uses_zsh" = 1 ]; }; then
       grep -qsF "$line" "$rc" 2>/dev/null || printf '\n# crewai\n%s\n' "$line" >> "$rc"
     fi
   done
+  # fish keeps its own config.
+  uses_fish=0
+  if [ -d "$HOME/.config/fish" ]; then uses_fish=1; fi
+  case "${SHELL:-}" in *fish) uses_fish=1 ;; esac
+  if [ "$uses_fish" = 1 ]; then
+    fish_rc="$HOME/.config/fish/config.fish"
+    mkdir -p "$HOME/.config/fish"
+    fish_line="fish_add_path \"$dir\""
+    grep -qsF "$fish_line" "$fish_rc" 2>/dev/null || printf '\n# crewai\n%s\n' "$fish_line" >> "$fish_rc"
+  fi
   say "Added $dir to your PATH in your shell startup files. Open a new terminal to pick it up."
 fi
 

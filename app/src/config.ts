@@ -1,6 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto';
 import {
-  chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync,
+  chmodSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync,
 } from 'node:fs';
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -11,9 +11,15 @@ export interface Settings {
   teamId: string;
   teamName: string;
   agent: AgentPref;
-  /** uids the owner chose "Always allow" for, per team. */
-  alwaysAllow: Record<string, string[]>;
+  /** Per team: uid -> time (local ms) until which that person's questions run without asking. */
+  allowUntil: Record<string, Record<string, number>>;
+  /** Per team: server time of the newest answer to my questions already shown in a chat. */
+  answersSeenAt: Record<string, number>;
 }
+
+/** How long "Always allow" lasts before the owner is asked again. */
+export const ALLOW_DAYS = 7;
+const ALLOW_MS = ALLOW_DAYS * 86_400_000;
 
 export interface Identity {
   email: string;
@@ -41,6 +47,11 @@ export interface Session {
   updatedAt: number;
   title: string;
   entries: Entry[];
+  /**
+   * Newest time among entries trimmed off the front of the log. Events at or before it are never
+   * added again, so a long chat does not replay old events after trimming.
+   */
+  floor?: number;
 }
 
 export interface SessionSummary {
@@ -50,7 +61,7 @@ export interface SessionSummary {
   count: number;
 }
 
-const DEFAULTS: Settings = { displayName: '', teamId: '', teamName: '', agent: 'auto', alwaysAllow: {} };
+const DEFAULTS: Settings = { displayName: '', teamId: '', teamName: '', agent: 'auto', allowUntil: {}, answersSeenAt: {} };
 
 function writeJson(path: string, data: unknown, mode?: number): void {
   const tmp = `${path}.${process.pid}.tmp`;
@@ -87,7 +98,18 @@ export class LocalStore {
   }
 
   settings(): Settings {
-    return { ...DEFAULTS, ...(readJson<Partial<Settings>>(join(this.dir, 'settings.json')) ?? {}) };
+    const raw = readJson<Partial<Settings> & { alwaysAllow?: Record<string, string[]> }>(join(this.dir, 'settings.json')) ?? {};
+    const { alwaysAllow, ...rest } = raw;
+    const s: Settings = { ...DEFAULTS, ...rest, allowUntil: { ...(rest.allowUntil ?? {}) }, answersSeenAt: { ...(rest.answersSeenAt ?? {}) } };
+    // Older versions kept "always allow" forever. Carry those over with the normal time limit.
+    if (alwaysAllow) {
+      const until = Date.now() + ALLOW_MS;
+      for (const [team, uids] of Object.entries(alwaysAllow)) {
+        s.allowUntil[team] = { ...Object.fromEntries(uids.map((u) => [u, until])), ...(s.allowUntil[team] ?? {}) };
+      }
+      writeJson(join(this.dir, 'settings.json'), s);
+    }
+    return s;
   }
   saveSettings(patch: Partial<Settings>): Settings {
     const next = { ...this.settings(), ...patch };
@@ -95,14 +117,56 @@ export class LocalStore {
     return next;
   }
 
-  isAlwaysAllowed(teamId: string, uid: string): boolean {
-    return (this.settings().alwaysAllow[teamId] ?? []).includes(uid);
+  isAlwaysAllowed(teamId: string, uid: string, now = Date.now()): boolean {
+    return (this.settings().allowUntil[teamId]?.[uid] ?? 0) > now;
   }
-  allowAlways(teamId: string, uid: string): void {
+  allowAlways(teamId: string, uid: string, now = Date.now()): void {
     const s = this.settings();
-    const list = new Set(s.alwaysAllow[teamId] ?? []);
-    list.add(uid);
-    this.saveSettings({ alwaysAllow: { ...s.alwaysAllow, [teamId]: [...list] } });
+    this.saveSettings({ allowUntil: { ...s.allowUntil, [teamId]: { ...(s.allowUntil[teamId] ?? {}), [uid]: now + ALLOW_MS } } });
+  }
+  /** Forget everything tied to a team (after leaving it). */
+  forgetTeam(teamId: string): void {
+    const s = this.settings();
+    const allowUntil = { ...s.allowUntil };
+    const answersSeenAt = { ...s.answersSeenAt };
+    delete allowUntil[teamId];
+    delete answersSeenAt[teamId];
+    this.saveSettings({ allowUntil, answersSeenAt, ...(s.teamId === teamId ? { teamId: '', teamName: '' } : {}) });
+  }
+
+  /**
+   * Only one crewai window per laptop answers teammates' questions (they all share one account).
+   * Returns true when this window holds the lock. A lock left by a process that has exited is taken over.
+   */
+  claimResponder(token: string): boolean {
+    const path = join(this.dir, 'responder.lock');
+    const mine = JSON.stringify({ pid: process.pid, token });
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        writeFileSync(path, mine, { flag: 'wx' });
+        return true;
+      } catch {
+        const cur = readJson<{ pid: number; token: string }>(path);
+        if (cur?.token === token) return true;
+        if (cur && processAlive(cur.pid)) return false;
+        try {
+          rmSync(path, { force: true });
+        } catch {
+          return false;
+        }
+      }
+    }
+    return false;
+  }
+  releaseResponder(token: string): void {
+    const path = join(this.dir, 'responder.lock');
+    if (readJson<{ token: string }>(path)?.token === token) {
+      try {
+        rmSync(path, { force: true });
+      } catch {
+        /* already gone */
+      }
+    }
   }
 
   /** Stable device account for the backend. The password never leaves this machine except to sign in. */
@@ -160,15 +224,30 @@ export class LocalStore {
   }
 }
 
+function processAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM';
+  }
+}
+
 const MAX_ENTRIES = 500;
 
 /** Append without duplicates (by key) and keep the log bounded. */
-export function appendEntry(s: Session, e: Omit<Entry, 'id'>): Entry | null {
+export function appendEntry(s: Session, e: Omit<Entry, 'id'>, max = MAX_ENTRIES): Entry | null {
   if (s.entries.some((x) => x.key === e.key)) return null;
+  // Anything at or before the newest trimmed entry was already shown once; never add it again.
+  if (s.floor !== undefined && e.at <= s.floor) return null;
   const entry: Entry = { ...e, id: randomBytes(5).toString('hex') };
   s.entries.push(entry);
-  if (s.entries.length > MAX_ENTRIES) s.entries.splice(0, s.entries.length - MAX_ENTRIES);
-  s.updatedAt = e.at;
+  if (s.entries.length > max) {
+    const gone = s.entries.splice(0, s.entries.length - max);
+    s.floor = Math.max(s.floor ?? -Infinity, ...gone.map((g) => g.at));
+  }
+  s.updatedAt = Math.max(s.updatedAt, e.at);
   if (s.title === 'New chat' && (e.kind === 'you' || e.kind === 'question')) s.title = e.text.slice(0, 60);
   return entry;
 }

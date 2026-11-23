@@ -2,6 +2,8 @@ rules_version = '2';
 
 // crewAI team data. Membership documents are the source of truth for access.
 // Repository files are never stored here; only team records and bounded answers.
+// Every event time is the server's time (request.time), so laptops with wrong clocks
+// cannot hide events from each other or pin messages to the top of a list.
 service cloud.firestore {
   match /databases/{database}/documents {
 
@@ -10,6 +12,7 @@ service cloud.firestore {
     function memberPath(teamId, uid) { return /databases/$(database)/documents/teams/$(teamId)/members/$(uid); }
     function namePath(teamId, n) { return /databases/$(database)/documents/teams/$(teamId)/names/$(n); }
     function invitePath(code) { return /databases/$(database)/documents/invites/$(code); }
+    function ticketPath(uid) { return /databases/$(database)/documents/joinTickets/$(uid); }
 
     function isMember(teamId) { return signedIn() && exists(memberPath(teamId, request.auth.uid)); }
     function me(teamId) { return get(memberPath(teamId, request.auth.uid)).data; }
@@ -17,6 +20,7 @@ service cloud.firestore {
     function okText(v, max) { return v is string && v.size() > 0 && v.size() <= max; }
     function okName(v) { return v is string && v.matches('^[A-Za-z0-9_.-]{1,40}$'); }
     function changed(keys) { return request.resource.data.diff(resource.data).affectedKeys().hasOnly(keys); }
+    function serverTime(v) { return v == request.time; }
 
     function inviteOk(teamId, code) {
       return code is string && code.matches('^[0-9]{6}$')
@@ -26,10 +30,9 @@ service cloud.firestore {
         && getAfter(invitePath(code)).data.used == true;
     }
 
-    // Invite codes: a manager creates one; a joiner claims it once (see members create).
-    match /invites/{code} {
-      allow get: if signedIn() && code.matches('^[0-9]{6}$');
-      allow create: if signedIn() && code.matches('^[0-9]{6}$')
+    // A new invite written by a manager of the team it is for.
+    function newInviteOk(code) {
+      return signedIn() && code.matches('^[0-9]{6}$')
         && request.resource.data.keys().hasOnly(['teamId', 'createdBy', 'expiresAt', 'used'])
         && isManager(request.resource.data.teamId)
         && request.resource.data.createdBy == request.auth.uid
@@ -37,11 +40,42 @@ service cloud.firestore {
         && request.resource.data.expiresAt is number
         && request.resource.data.expiresAt > request.time.toMillis()
         && request.resource.data.expiresAt <= request.time.toMillis() + 900000;
-      allow update: if signedIn()
-        && resource.data.used == false
-        && resource.data.expiresAt > request.time.toMillis()
-        && changed(['used'])
-        && request.resource.data.used == true;
+    }
+
+    // Before reading an invite, a joiner records which code they are trying, at most once every
+    // two seconds per account. This keeps anyone from scanning the six-digit code space.
+    match /joinTickets/{uid} {
+      allow get: if signedIn() && request.auth.uid == uid;
+      allow create: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['code', 'at'])
+        && request.resource.data.code is string && request.resource.data.code.matches('^[0-9]{6}$')
+        && serverTime(request.resource.data.at);
+      allow update: if signedIn() && request.auth.uid == uid
+        && request.resource.data.keys().hasOnly(['code', 'at'])
+        && request.resource.data.code is string && request.resource.data.code.matches('^[0-9]{6}$')
+        && serverTime(request.resource.data.at)
+        && request.time > resource.data.at + duration.value(2, 's');
+    }
+
+    // Invite codes: a manager creates one; a joiner claims it once, in the same write that adds them
+    // to the team. Expired or used codes can be reissued, so the code space never runs out.
+    match /invites/{code} {
+      allow get: if signedIn() && code.matches('^[0-9]{6}$')
+        && get(ticketPath(request.auth.uid)).data.code == code;
+      allow create: if newInviteOk(code);
+      allow update: if
+        // reissue a code that is no longer live
+        ((resource.data.used == true || resource.data.expiresAt <= request.time.toMillis()) && newInviteOk(code))
+        ||
+        // claim it while joining: only together with creating your own membership with this code
+        (signedIn()
+          && resource.data.used == false
+          && resource.data.expiresAt > request.time.toMillis()
+          && changed(['used'])
+          && request.resource.data.used == true
+          && !exists(memberPath(resource.data.teamId, request.auth.uid))
+          && existsAfter(memberPath(resource.data.teamId, request.auth.uid))
+          && getAfter(memberPath(resource.data.teamId, request.auth.uid)).data.inviteCode == code);
     }
 
     match /teams/{teamId} {
@@ -52,17 +86,26 @@ service cloud.firestore {
         && okText(request.resource.data.name, 40)
         && request.resource.data.taskSeq == 0
         && request.resource.data.createdAt is number;
+      // Task numbers: one transaction may reserve up to 8 numbers (one per assignee).
       allow update: if isMember(teamId)
         && changed(['taskSeq'])
-        && request.resource.data.taskSeq == resource.data.taskSeq + 1;
+        && request.resource.data.taskSeq > resource.data.taskSeq
+        && request.resource.data.taskSeq <= resource.data.taskSeq + 8;
 
+      // Reserved display names (lower case). Only written together with the matching membership.
       match /names/{n} {
         allow read: if isMember(teamId);
         allow create: if signedIn()
           && request.resource.data.keys().hasOnly(['uid', 'name'])
           && request.resource.data.uid == request.auth.uid
           && okName(request.resource.data.name)
-          && n == request.resource.data.name.lower();
+          && n == request.resource.data.name.lower()
+          && existsAfter(memberPath(teamId, request.auth.uid))
+          && getAfter(memberPath(teamId, request.auth.uid)).data.name == request.resource.data.name;
+        // Released only together with the membership it belongs to.
+        allow delete: if isMember(teamId)
+          && (resource.data.uid == request.auth.uid || isManager(teamId))
+          && !existsAfter(memberPath(teamId, resource.data.uid));
       }
 
       match /members/{uid} {
@@ -70,7 +113,8 @@ service cloud.firestore {
         allow create: if signedIn() && request.auth.uid == uid
           && request.resource.data.keys().hasOnly(['name', 'role', 'lastSeen', 'agent', 'project', 'joinedAt', 'inviteCode'])
           && okName(request.resource.data.name)
-          && request.resource.data.lastSeen == request.time
+          && serverTime(request.resource.data.lastSeen)
+          && serverTime(request.resource.data.joinedAt)
           && request.resource.data.agent == null
           && request.resource.data.project == ''
           && existsAfter(namePath(teamId, request.resource.data.name.lower()))
@@ -83,12 +127,26 @@ service cloud.firestore {
             (request.resource.data.role == 'member'
               && inviteOk(teamId, request.resource.data.inviteCode))
           );
-        allow update: if signedIn() && request.auth.uid == uid
-          && changed(['lastSeen', 'agent', 'project'])
-          && request.resource.data.lastSeen == request.time
-          && (request.resource.data.agent == null || request.resource.data.agent in ['codex', 'claude'])
-          && request.resource.data.project is string
-          && request.resource.data.project.size() <= 120;
+        allow update: if
+          // presence, by the member themself
+          (signedIn() && request.auth.uid == uid
+            && changed(['lastSeen', 'agent', 'project'])
+            && serverTime(request.resource.data.lastSeen)
+            && (request.resource.data.agent == null || request.resource.data.agent in ['codex', 'claude'])
+            && request.resource.data.project is string
+            && request.resource.data.project.size() <= 120)
+          ||
+          // a manager makes someone else a manager
+          (isManager(teamId) && request.auth.uid != uid
+            && changed(['role'])
+            && resource.data.role == 'member'
+            && request.resource.data.role == 'manager');
+        // Leave (yourself) or remove (a manager). The team owner cannot be removed, and the name
+        // reservation must be released in the same write.
+        allow delete: if isMember(teamId)
+          && (request.auth.uid == uid || isManager(teamId))
+          && uid != get(teamPath(teamId)).data.ownerUid
+          && !existsAfter(namePath(teamId, resource.data.name.lower()));
       }
 
       match /broadcasts/{id} {
@@ -98,7 +156,7 @@ service cloud.firestore {
           && request.resource.data.fromUid == request.auth.uid
           && request.resource.data.fromName == me(teamId).name
           && okText(request.resource.data.text, 2000)
-          && request.resource.data.createdAt is number;
+          && serverTime(request.resource.data.createdAt);
       }
 
       match /tasks/{id} {
@@ -112,7 +170,11 @@ service cloud.firestore {
           && okText(request.resource.data.text, 2000)
           && request.resource.data.status == 'todo'
           && request.resource.data.note == ''
-          && request.resource.data.num == getAfter(teamPath(teamId)).data.taskSeq;
+          && serverTime(request.resource.data.createdAt)
+          && serverTime(request.resource.data.updatedAt)
+          && request.resource.data.num is int
+          && request.resource.data.num > get(teamPath(teamId)).data.taskSeq
+          && request.resource.data.num <= getAfter(teamPath(teamId)).data.taskSeq;
         allow update: if isMember(teamId)
           && (resource.data.assigneeUid == request.auth.uid
               || resource.data.assignerUid == request.auth.uid
@@ -120,7 +182,8 @@ service cloud.firestore {
           && changed(['status', 'note', 'updatedAt'])
           && request.resource.data.status in ['todo', 'in_progress', 'done', 'cancelled', 'needs_help']
           && request.resource.data.note is string
-          && request.resource.data.note.size() <= 300;
+          && request.resource.data.note.size() <= 300
+          && serverTime(request.resource.data.updatedAt);
       }
 
       // A question has exactly one owner at a time. Only the asker, the current target
@@ -141,8 +204,10 @@ service cloud.firestore {
           && request.resource.data.answer == ''
           && request.resource.data.agent == ''
           && request.resource.data.error == ''
-          && request.resource.data.movedFrom.size() == 0;
-        allow update: if isMember(teamId) && (
+          && request.resource.data.movedFrom.size() == 0
+          && serverTime(request.resource.data.createdAt)
+          && serverTime(request.resource.data.updatedAt);
+        allow update: if isMember(teamId) && serverTime(request.resource.data.updatedAt) && (
           // asker moves a still-pending question to someone else
           (resource.data.askerUid == request.auth.uid
             && resource.data.status == 'pending'

@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { AgentRunner } from './agents.js';
@@ -28,11 +28,14 @@ export async function createDemo() {
   const cloud = new MemoryStore();
   const dir = mkdtempSync(join(tmpdir(), 'crewai-demo-'));
   const store = new LocalStore(dir);
+  const temps: string[] = [];
 
   const mk = async (name: string, uid: string, agents: AgentName[], boss?: Backend, code?: string) => {
     const backend = cloud.backendFor(uid);
     const team = boss ? await backend.joinTeam(code!, name) : await backend.createTeam('Acme', name);
-    const local = new LocalStore(mkdtempSync(join(tmpdir(), 'crewai-demo-p-')));
+    const localDir = mkdtempSync(join(tmpdir(), 'crewai-demo-p-'));
+    temps.push(localDir);
+    const local = new LocalStore(localDir);
     local.allowAlways(team.id, DEMO_UID);
     const engine = new Engine({ backend, store: local, runner: scripted(name, 1200, agents), folder: join(dir, `${name}-project`) });
     await engine.start(team);
@@ -66,6 +69,8 @@ export async function createDemo() {
     async stop() {
       clearInterval(seed);
       await Promise.all([priya, hemant, shwetank].map((p) => p.engine.stop()));
+      // Remove the demo's temporary folders.
+      for (const d of [dir, ...temps]) rmSync(d, { recursive: true, force: true });
     },
   };
 }

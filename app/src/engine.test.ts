@@ -267,3 +267,113 @@ describe('team commands', () => {
     expect(t).toContain('Ann');
   });
 });
+
+describe('review fixes', () => {
+  it('lets only one window per laptop answer, and hands over when it closes', async () => {
+    const w = world();
+    const boss = await w.person('Boss');
+    const hem = await w.person('Hemant');
+    // A second window for Hemant: same account and same ~/.crewai.
+    const second = new Engine({
+      backend: hem.backend, store: hem.local, runner: fakeRunner(['codex'], () => 'second'), folder: join(tmp(), 'other'),
+      now: () => w.clock.t, tickMs: 0, heartbeatMs: 0,
+    });
+    engines.push(second);
+    await second.start(hem.engine.state.team!);
+    second.attach(hem.local.newSession(join(tmp(), 'y'), w.clock.t), w.clock.t);
+    expect(second.state.responder).toBe(false);
+    expect(texts(second).some((t) => t.includes('Another crewai window'))).toBe(true);
+
+    hem.local.allowAlways(hem.engine.state.team!.id, boss.backend.uid);
+    await boss.engine.submit('/read @hemant what is this');
+    await vi.waitFor(() => expect(boss.engine.state.entries.some((e) => e.kind === 'agent')).toBe(true));
+    expect(boss.engine.state.entries.find((e) => e.kind === 'agent')!.text).not.toBe('second');
+    expect(texts(boss.engine).some((t) => t.includes("couldn't answer"))).toBe(false);
+    expect(second.state.attention).toHaveLength(0);
+
+    await hem.engine.stop();
+    await second.tick();
+    expect(second.state.responder).toBe(true);
+  });
+
+  it('removes secrets from an answer before it is sent to the asker', async () => {
+    const w = world();
+    const boss = await w.person('Boss');
+    const runner = fakeRunner(['codex'], () => 'The key is in .env: STRIPE_SECRET_KEY=sk_live_abcdefghijklmnop1234');
+    const hem = await w.person('Hemant', { runner });
+    await boss.engine.submit('/read @hemant print the env file');
+    await hem.engine.decideConsent(hem.engine.state.attention[0]!.request.id, 'once');
+    await vi.waitFor(() => expect(boss.engine.state.entries.some((e) => e.kind === 'agent')).toBe(true));
+    const ans = boss.engine.state.entries.find((e) => e.kind === 'agent')!.text;
+    expect(ans).not.toContain('sk_live_abcdefghijklmnop1234');
+    expect(ans).toContain('[secret removed]');
+    expect(texts(hem.engine).some((t) => t.includes('looked like secrets'))).toBe(true);
+  });
+
+  it('does not re-broadcast a task that is already done', async () => {
+    const w = world();
+    const boss = await w.person('Boss');
+    const hem = await w.person('Hemant');
+    await boss.engine.submit('/task @hemant ship it');
+    const t = hem.engine.state.tasks[0]!;
+    await hem.engine.setTaskStatus(t.id, 'done');
+    await hem.engine.setTaskStatus(t.id, 'done');
+    expect(boss.engine.state.broadcasts.filter((b) => b.text.includes('T-1 done'))).toHaveLength(1);
+    expect(texts(hem.engine).some((x) => x.includes('already done'))).toBe(true);
+  });
+
+  it('creates no tasks at all when one assignee is invalid', async () => {
+    const w = world();
+    const boss = await w.person('Boss');
+    const hem = await w.person('Hemant');
+    await expect(
+      boss.backend.createTasks(boss.engine.state.team!.id, [
+        { assigneeUid: hem.backend.uid, assigneeName: 'Hemant', text: 'one' },
+        { assigneeUid: 'nobody', assigneeName: 'Zed', text: 'two' },
+      ]),
+    ).rejects.toThrow();
+    expect(w.store.tasks.get(boss.engine.state.team!.id) ?? []).toHaveLength(0);
+  });
+
+  it('shows an answer that arrived while crewai was closed in a brand-new chat, once', async () => {
+    const w = world();
+    const boss = await w.person('Boss');
+    const hem = await w.person('Hemant');
+    await boss.engine.submit('/read @hemant status?');
+    await boss.engine.stop(); // Boss closes crewai
+    w.clock.t += 60_000;
+    await hem.engine.decideConsent(hem.engine.state.attention[0]!.request.id, 'once');
+    await vi.waitFor(() => expect(w.store.requests.get(hem.engine.state.team!.id)![0]!.status).toBe('answered'));
+
+    const again = new Engine({ backend: boss.backend, store: boss.local, runner: boss.runner, folder: join(tmp(), 'b'), now: () => w.clock.t, tickMs: 0, heartbeatMs: 0 });
+    engines.push(again);
+    await again.start(boss.engine.state.team!);
+    expect(again.unseenAnswers()).toBe(1);
+    again.attach(boss.local.newSession(join(tmp(), 'n'), w.clock.t), w.clock.t);
+    expect(again.state.entries.filter((e) => e.kind === 'agent')).toHaveLength(1);
+    expect(again.unseenAnswers()).toBe(0);
+    // A second new chat does not repeat it.
+    w.clock.t += 1000;
+    again.attach(boss.local.newSession(join(tmp(), 'm'), w.clock.t), w.clock.t);
+    expect(again.state.entries.filter((e) => e.kind === 'agent')).toHaveLength(0);
+  });
+
+  it('lets a manager remove and promote people, and a member leave', async () => {
+    const w = world();
+    const boss = await w.person('Boss');
+    const ann = await w.person('Ann');
+    const bob = await w.person('Bob');
+    await ann.engine.submit('/team remove @bob');
+    expect(texts(ann.engine).some((t) => t.includes('Only a manager'))).toBe(true);
+    await boss.engine.submit('/team promote @ann');
+    expect(boss.engine.state.members.find((m) => m.name === 'Ann')!.role).toBe('manager');
+    await ann.engine.submit('/team remove @bob');
+    expect(boss.engine.state.members.map((m) => m.name).sort()).toEqual(['Ann', 'Boss']);
+    expect(await bob.backend.getTeam(boss.engine.state.team!.id).catch(() => 'denied')).toBe('denied');
+    await ann.engine.submit('/team remove @boss');
+    expect(boss.engine.state.members).toHaveLength(2);
+    expect((await ann.engine.submit('/team leave')).action).toBe('quit');
+    expect(ann.local.settings().teamId).toBe('');
+    expect(boss.engine.state.members.map((m) => m.name)).toEqual(['Boss']);
+  });
+});

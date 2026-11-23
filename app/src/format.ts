@@ -4,13 +4,14 @@ export function hhmm(ms: number): string {
 }
 
 export function ago(ms: number, now = Date.now()): string {
-  const s = Math.max(0, Math.round((now - ms) / 1000));
+  // Whole units, rounded down, so the value never reads "60m" or "48h".
+  const s = Math.max(0, Math.floor((now - ms) / 1000));
   if (s < 60) return 'just now';
-  const m = Math.round(s / 60);
+  const m = Math.floor(s / 60);
   if (m < 60) return `${m}m ago`;
-  const h = Math.round(m / 60);
+  const h = Math.floor(m / 60);
   if (h < 48) return `${h}h ago`;
-  return `${Math.round(h / 24)}d ago`;
+  return `${Math.floor(h / 24)}d ago`;
 }
 
 export function formatCode(code: string): string {

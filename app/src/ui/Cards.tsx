@@ -97,7 +97,7 @@ function OptionRow({ options, selected, focused }: { options: CardOption[]; sele
       {options.map((o, i) => (
         <Text key={o.label}>
           {i > 0 ? '   ' : ''}
-          {focused && i === selected ? <Text inverse color="cyan"> {o.label} </Text> : <Text> {o.label} </Text>}
+          {focused && i === selected ? <Text inverse color="cyan"> {o.label} </Text> : <Text> [{o.label}] </Text>}
         </Text>
       ))}
     </Text>
@@ -116,11 +116,11 @@ export function AttentionCard({
         <Text bold color="yellow">{r.askerName} asks about your project</Text>
         <Text>"{clip(r.question, 300)}"</Text>
         <Text dimColor>
-          Your {agent ?? 'agent'} will answer from {folder}. Limited protection: it can read files in this folder and use the
-          network. Only the answer is shared.
+          Your {agent ?? 'agent'} will answer from {folder}. Limited protection: it can read any file in this folder. Only the
+          answer is shared, and values that look like secrets are removed first, but that check is not perfect.
         </Text>
         <OptionRow options={options} selected={selected} focused={focused} />
-        {focused ? <Text dimColor>← → choose · enter confirm (when the message box is empty)</Text> : null}
+        {focused ? <Text dimColor>← → pick an option, then enter (when the message box is empty)</Text> : null}
       </Box>
     );
   }
@@ -141,7 +141,7 @@ export function AttentionCard({
       </Text>
       <Text dimColor>"{clip(r.question, 120)}" is saved{item.targetOnline ? '.' : ' and will reach them when they return.'}</Text>
       <OptionRow options={options} selected={selected} focused={focused} />
-      {focused ? <Text dimColor>← → choose · enter confirm (when the message box is empty)</Text> : null}
+      {focused ? <Text dimColor>← → pick an option, then enter (when the message box is empty)</Text> : null}
     </Box>
   );
 }
@@ -159,13 +159,20 @@ export function sortTasks(tasks: Task[]): Task[] {
   return [...tasks].sort((a, b) => Number(open(b)) - Number(open(a)) || b.updatedAt - a.updatedAt);
 }
 
-export function TaskPanel({ tasks, selected, meUid }: { tasks: Task[]; selected: number; meUid: string }) {
-  const rows = sortTasks(tasks).slice(0, 12);
+const PAGE = 12;
+
+/** `rows` is already sorted; only a window of PAGE rows around the selection is drawn. */
+export function TaskPanel({ rows, selected, meUid }: { rows: Task[]; selected: number; meUid: string }) {
+  const start = Math.max(0, Math.min(selected - Math.floor(PAGE / 2), rows.length - PAGE));
+  const visible = rows.slice(start, start + PAGE);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor="blue" paddingX={1} marginTop={1}>
-      <Text bold color="blue">Tasks</Text>
+      <Text bold color="blue">
+        Tasks{rows.length > PAGE ? <Text dimColor> {start + 1}–{start + visible.length} of {rows.length}</Text> : null}
+      </Text>
       {rows.length === 0 ? <Text dimColor>No tasks yet. Try /task @name what to do.</Text> : null}
-      {rows.map((t, i) => {
+      {visible.map((t, j) => {
+        const i = start + j;
         const { g, c } = GLYPH[t.status];
         return (
           <Text key={t.id} inverse={i === selected} wrap="truncate-end">

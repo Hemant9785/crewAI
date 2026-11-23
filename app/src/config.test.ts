@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, statSync } from 'node:fs';
+import { mkdtempSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -75,5 +75,88 @@ describe('agents', () => {
     const r = fakeRunner(['codex'], (q) => `A:${q}`);
     expect((await r.run('codex', 'hi', '.')).text).toBe('A:hi');
     expect(r.calls).toEqual(['hi']);
+  });
+});
+
+describe('fixes from the 2026-11-23 review', () => {
+  it('stops agents that ignore the time limit, including a process tree on Windows', async () => {
+    const { execForTest } = await import('./agents.js');
+    const started = Date.now();
+    const r = await execForTest(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], null, process.cwd(), 300);
+    expect(r.timedOut).toBe(true);
+    expect(Date.now() - started).toBeLessThan(6000);
+  }, 10000);
+
+  it('treats a non-zero exit as a failure even when something was printed', async () => {
+    const { interpretRun } = await import('./agents.js');
+    expect(interpretRun('claude', 1, 'Error: not logged in', '')).toMatchObject({ ok: false });
+    expect(interpretRun('claude', 1, 'usage: claude', '').text).toContain('usage: claude');
+    expect(interpretRun('claude', 0, 'the answer', '')).toMatchObject({ ok: true, text: 'the answer' });
+    expect(interpretRun('codex', 1, '', 'warn', 'answer from file')).toMatchObject({ ok: true, text: 'answer from file' });
+    expect(interpretRun('codex', 0, '   ', '')).toMatchObject({ ok: false });
+  });
+
+  it('removes values that look like secrets from answers', async () => {
+    const { redactSecrets } = await import('./agents.js');
+    const raw = [
+      'DATABASE_PASSWORD=hunter2hunter2',
+      'aws key AKIAABCDEFGHIJKLMNOP here',
+      'token ghp_abcdefghijklmnopqrstuvwxyz0123456789',
+      '"apiKey": "AIzaSyA-1234567890abcdefghijklmnopqrstu"',
+      'postgres://admin:s3cretpw@db.example.com/app',
+      '-----BEGIN RSA PRIVATE KEY-----\nMIIabc\n-----END RSA PRIVATE KEY-----',
+      'API_KEY=${API_KEY} and password: ****',
+      'The login flow lives in src/auth.ts.',
+    ].join('\n');
+    const { text, count } = redactSecrets(raw);
+    for (const leaked of ['hunter2hunter2', 'AKIAABCDEFGHIJKLMNOP', 'ghp_abc', 'AIzaSyA', 's3cretpw', 'MIIabc']) {
+      expect(text).not.toContain(leaked);
+    }
+    expect(text).toContain('API_KEY=${API_KEY}');
+    expect(text).toContain('src/auth.ts');
+    expect(count).toBeGreaterThanOrEqual(6);
+  });
+
+  it('runs Claude with write, shell and web tools explicitly denied', () => {
+    const args = buildCommand('claude', 'o').args.join(' ');
+    expect(args).toContain('--disallowedTools');
+    expect(args).toMatch(/Bash/);
+    expect(args).toContain('--permission-mode default');
+  });
+
+  it('lets only one window per laptop answer questions, and takes over a lock left by a dead process', () => {
+    const s = new LocalStore(tmp());
+    expect(s.claimResponder('a')).toBe(true);
+    expect(s.claimResponder('a')).toBe(true);
+    expect(s.claimResponder('b')).toBe(false);
+    s.releaseResponder('b'); // not the holder: no effect
+    expect(s.claimResponder('b')).toBe(false);
+    s.releaseResponder('a');
+    expect(s.claimResponder('b')).toBe(true);
+    writeFileSync(join(s.dir, 'responder.lock'), JSON.stringify({ pid: 2_147_000_000, token: 'dead' }));
+    expect(s.claimResponder('c')).toBe(true);
+  });
+
+  it('expires "always allow" and migrates the old forever list', () => {
+    const s = new LocalStore(tmp());
+    s.allowAlways('t1', 'u1', 1000);
+    expect(s.isAlwaysAllowed('t1', 'u1', 2000)).toBe(true);
+    expect(s.isAlwaysAllowed('t1', 'u1', 1000 + 8 * 86_400_000)).toBe(false);
+    const old = new LocalStore(tmp());
+    writeFileSync(join(old.dir, 'settings.json'), JSON.stringify({ displayName: 'Ann', alwaysAllow: { t1: ['u9'] } }));
+    expect(old.isAlwaysAllowed('t1', 'u9')).toBe(true);
+    expect(old.isAlwaysAllowed('t1', 'u9', Date.now() + 8 * 86_400_000)).toBe(false);
+    expect(old.settings().displayName).toBe('Ann');
+    old.forgetTeam('t1');
+    expect(old.isAlwaysAllowed('t1', 'u9')).toBe(false);
+  });
+
+  it('never re-adds an event after it was trimmed from a long chat', () => {
+    const s = new LocalStore(tmp());
+    const sess = s.newSession(tmp(), 0);
+    for (let i = 1; i <= 5; i++) appendEntry(sess, { key: `k${i}`, at: i, kind: 'system', who: '', text: `${i}` }, 3);
+    expect(sess.entries.map((e) => e.key)).toEqual(['k3', 'k4', 'k5']);
+    expect(appendEntry(sess, { key: 'k1', at: 1, kind: 'system', who: '', text: '1' }, 3)).toBeNull();
+    expect(appendEntry(sess, { key: 'k6', at: 6, kind: 'system', who: '', text: '6' }, 3)).not.toBeNull();
   });
 });

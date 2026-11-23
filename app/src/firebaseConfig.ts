@@ -46,5 +46,26 @@ export function loadFirebaseSettings(home: string, env: NodeJS.ProcessEnv = proc
 }
 
 export const SETUP_HINT =
-  'Firebase is not set up yet. Set CREWAI_FIREBASE_PROJECT_ID and CREWAI_FIREBASE_API_KEY ' +
-  '(see app/.env.example), or run with --demo to try the interface.';
+  'This crewai build has no team service configured. Put CREWAI_FIREBASE_PROJECT_ID and ' +
+  'CREWAI_FIREBASE_API_KEY in ~/.crewai/.env (or set them as environment variables), or run ' +
+  'crewai --demo to try the interface. See https://github.com/Hemant9785/crewAI/blob/main/app/README.md';
+
+/** Where the active Firebase settings come from, for `crewai --config-status`. */
+export function firebaseSource(home: string, env: NodeJS.ProcessEnv = process.env): 'environment' | 'file' | 'embedded' | 'none' {
+  if (env.CREWAI_FIREBASE_PROJECT_ID && env.CREWAI_FIREBASE_API_KEY) return 'environment';
+  try {
+    const f = JSON.parse(readFileSync(join(home, 'firebase.json'), 'utf8')) as Partial<FirebaseSettings>;
+    if (f.projectId && f.apiKey) return 'file';
+  } catch {
+    /* optional */
+  }
+  try {
+    if (typeof __CREWAI_FIREBASE__ === 'string' && __CREWAI_FIREBASE__) {
+      const e = JSON.parse(__CREWAI_FIREBASE__) as Partial<FirebaseSettings>;
+      if (e.projectId && e.apiKey) return 'embedded';
+    }
+  } catch {
+    /* malformed */
+  }
+  return 'none';
+}

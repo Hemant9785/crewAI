@@ -132,7 +132,7 @@ describe('drafts', () => {
 });
 
 describe('questions between people', () => {
-  it('shows the owner an approval card; Enter on the empty box allows it and the asker gets the answer', async () => {
+  it('shows the owner an approval card; Enter alone does nothing, an explicit choice allows it', async () => {
     const cloud = new MemoryStore();
     const boss = cloud.backendFor('u-boss');
     const team = await boss.createTeam('Acme', 'Boss');
@@ -157,6 +157,11 @@ describe('questions between people', () => {
     await hem.waitFor('Boss asks about your project');
     expect(hem.out()).toContain('Allow once');
     expect(hem.out()).toContain('Limited protection');
+    await hem.type(KEY.enter); // nothing chosen yet: an Enter meant for the message box must not approve
+    await tick(100);
+    expect(bossEngine.state.entries.some((e) => e.kind === 'agent')).toBe(false);
+    expect(hem.holder.engine!.state.attention[0]).toMatchObject({ type: 'consent' });
+    await hem.type(KEY.right); // Allow once
     await hem.type(KEY.enter);
     await vi.waitFor(() => expect(bossEngine.state.entries.some((e) => e.kind === 'agent')).toBe(true));
     expect(bossEngine.state.entries.find((e) => e.kind === 'agent')!.text).toContain('what is this project about');
@@ -177,6 +182,7 @@ describe('questions between people', () => {
     await m.waitFor('Hemant is offline');
     expect(m.out()).toContain('Wait for Hemant');
     expect(m.out()).toContain('Ask Shwetank');
+    await m.type(KEY.right); // Wait for Hemant
     await m.type(KEY.right); // Ask Shwetank
     await m.type(KEY.enter);
     await vi.waitFor(() => expect(shw.engine.state.attention[0]).toMatchObject({ type: 'consent' }));

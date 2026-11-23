@@ -1,7 +1,7 @@
 import { Box, Static, Text, useInput } from 'ink';
 import { basename } from 'node:path';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { Entry } from '../config.js';
+import { ALLOW_DAYS, type Entry } from '../config.js';
 import type { Attention, Engine } from '../engine.js';
 import { AttentionCard, EntryView, StatusBar, TaskPanel, sortTasks, type CardOption } from './Cards.js';
 import { Composer } from './Composer.js';
@@ -17,9 +17,11 @@ export function Chat({ engine, folder, onQuit, onNew }: { engine: Engine; folder
   const seen = useRef(new Set<string>());
   const [history, setHistory] = useState<string[]>([]);
   const [panel, setPanel] = useState(false);
-  const [taskSel, setTaskSel] = useState(0);
+  const [taskSelId, setTaskSelId] = useState('');
   const [composerEmpty, setComposerEmpty] = useState(true);
-  const [sel, setSel] = useState(0);
+  // -1 means no option is chosen yet: Enter does nothing until the user picks one with an arrow key,
+  // so an Enter meant for the message box can never approve a teammate's question.
+  const [sel, setSel] = useState(-1);
   const [restore, setRestore] = useState<{ text: string; n: number } | undefined>();
 
   useEffect(() => {
@@ -35,7 +37,7 @@ export function Chat({ engine, folder, onQuit, onNew }: { engine: Engine; folder
     if (a.type === 'consent') {
       return [
         { label: 'Allow once', run: () => void engine.decideConsent(id, 'once') },
-        { label: `Always allow ${a.request.askerName}`, run: () => void engine.decideConsent(id, 'always') },
+        { label: `Allow ${a.request.askerName} for ${ALLOW_DAYS} days`, run: () => void engine.decideConsent(id, 'always') },
         { label: 'Decline', run: () => void engine.decideConsent(id, 'decline') },
       ];
     }
@@ -48,27 +50,32 @@ export function Chat({ engine, folder, onQuit, onNew }: { engine: Engine; folder
   const focus = cards[0];
   const focusOptions = focus ? optionsFor(focus) : [];
   const focusKey = focus ? `${focus.request.id}:${focus.type}:${focusOptions.length}` : '';
-  useEffect(() => setSel(0), [focusKey]);
+  useEffect(() => setSel(-1), [focusKey]);
 
   useInput(
     (_input, key) => {
       const n = focusOptions.length;
       if (n === 0) return;
-      if (key.leftArrow) setSel((sel + n - 1) % n);
-      else if (key.rightArrow) setSel((sel + 1) % n);
-      else if (key.return) focusOptions[Math.min(sel, n - 1)]!.run();
+      if (key.leftArrow) setSel(sel < 0 ? n - 1 : (sel + n - 1) % n);
+      else if (key.rightArrow) setSel(sel < 0 ? 0 : (sel + 1) % n);
+      else if (key.return && sel >= 0) focusOptions[Math.min(sel, n - 1)]!.run();
     },
     { isActive: !panel && composerEmpty && focusOptions.length > 0 },
   );
 
-  const rows = sortTasks(s.tasks).slice(0, 12);
+  // The selection follows a task, not a row number, because rows re-sort when a task changes.
+  const rows = sortTasks(s.tasks);
+  const found = rows.findIndex((t) => t.id === taskSelId);
+  const taskSel = found >= 0 ? found : 0;
   useInput(
     (input, key) => {
       if (key.escape || input === 'q') return setPanel(false);
-      if (key.upArrow) return setTaskSel((taskSel + rows.length - 1) % Math.max(1, rows.length));
-      if (key.downArrow) return setTaskSel((taskSel + 1) % Math.max(1, rows.length));
+      const n = Math.max(1, rows.length);
+      if (key.upArrow) return setTaskSelId(rows[(taskSel + n - 1) % n]?.id ?? '');
+      if (key.downArrow) return setTaskSelId(rows[(taskSel + 1) % n]?.id ?? '');
       const t = rows[taskSel];
       if (!t) return;
+      if (!taskSelId) setTaskSelId(t.id);
       if (input === 's') void engine.setTaskStatus(t.id, 'in_progress');
       else if (input === 'd') void engine.setTaskStatus(t.id, 'done');
       else if (input === 'h') void engine.setTaskStatus(t.id, 'needs_help');
@@ -85,7 +92,7 @@ export function Chat({ engine, folder, onQuit, onNew }: { engine: Engine; folder
       if (out.action === 'quit') onQuit();
       else if (out.action === 'new') onNew();
       else if (out.action === 'tasks') {
-        setTaskSel(0);
+        setTaskSelId('');
         setPanel(true);
       }
     },
@@ -118,14 +125,14 @@ export function Chat({ engine, folder, onQuit, onNew }: { engine: Engine; folder
           key={`${a.type}:${a.request.id}`}
           item={a}
           options={optionsFor(a)}
-          selected={Math.min(sel, Math.max(0, focusOptions.length - 1))}
+          selected={Math.min(sel, focusOptions.length - 1)}
           focused={i === 0 && composerEmpty && !panel}
           agent={s.agent}
           folder={folderName}
         />
       ))}
       {panel ? (
-        <TaskPanel tasks={s.tasks} selected={taskSel} meUid={s.me?.uid ?? ''} />
+        <TaskPanel rows={rows} selected={taskSel} meUid={s.me?.uid ?? ''} />
       ) : (
         <Composer
           members={s.members}

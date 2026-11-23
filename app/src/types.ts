@@ -75,7 +75,7 @@ export interface PresenceInfo {
 export const ONLINE_WINDOW_MS = 90_000;
 export const HEARTBEAT_MS = 30_000;
 export const INVITE_TTL_MS = 10 * 60_000;
-export const LIMITS = { text: 2000, answer: 8000, name: 40, error: 300 } as const;
+export const LIMITS = { text: 2000, answer: 8000, name: 40, error: 300, assignees: 8 } as const;
 
 /** Names are used as @mentions, so they stay simple. Spaces are not allowed. */
 export const NAME_PATTERN = /^[A-Za-z0-9_.-]{1,40}$/;

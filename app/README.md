@@ -41,6 +41,8 @@ Then run `crewai` in any project folder. (Publishing to npm is not set up; the p
 | `/broadcast message` | message to everyone |
 | `/tasks` | task board: s start, d done, h need help, x cancel |
 | `/team`, `/team invite` | people and presence; managers create a 6-digit invite |
+| `/team remove @name`, `/team promote @name` | managers remove someone (not the owner) or make them a manager |
+| `/team leave` | leave the team (the owner cannot leave) |
 | `/agent codex|claude|auto` | choose your agent (auto-detected otherwise) |
 | `/new` | start a new chat (past chats are listed on the next launch) |
 
@@ -49,10 +51,12 @@ Then run `crewai` in any project folder. (Publishing to npm is not set up; the p
 1. Create a Firebase project. Enable Authentication > Email/Password and create a Firestore database.
 2. Copy the web app config into `~/.crewai/.env` (see `.env.example`):
    `CREWAI_FIREBASE_PROJECT_ID`, `CREWAI_FIREBASE_API_KEY`, `CREWAI_FIREBASE_AUTH_DOMAIN`, `CREWAI_FIREBASE_APP_ID`.
-3. Deploy the rules: `npx firebase deploy --only firestore --project <id>` (or `npm run deploy:rules -- --project <id>`).
+3. Deploy the rules and indexes: `npx firebase deploy --only firestore --project <id>` (or `npm run deploy:rules -- --project <id>`).
+   Redeploy whenever `firestore.rules` or `firestore.indexes.json` changes: the app needs the request indexes, and
+   this version writes server timestamps that older rules reject (and older apps cannot write under the new rules).
 4. Check: `node dist/cli.js --check`.
 
-Local data lives in `~/.crewai` (`CREWAI_HOME` overrides): `identity.json` (this device's account; keep it private), `settings.json`, and `sessions/` (chat history per folder).
+Local data lives in `~/.crewai` (`CREWAI_HOME` overrides): `identity.json` (this device's account; keep it private), `settings.json`, `sessions/` (chat history per folder) and `responder.lock` (which open window answers teammates' questions; only one does).
 
 ## Tests
 
@@ -64,9 +68,11 @@ npm run test:live      # same contract against YOUR Firebase project in ~/.crewa
 
 ## Known limits
 
-- Remote answers are not sandboxed by the operating system. Codex runs with its read-only sandbox flag and Claude with read-only tools, but the approval card always says "Limited protection".
+- Remote answers are not sandboxed by the operating system. Codex runs with its read-only sandbox flag and Claude with read-only tools (shell, edit and web tools explicitly denied), but the approval card always says "Limited protection".
+- Answers are scanned for values that look like secrets (keys, tokens, passwords, private keys) and those are replaced before sending. This is best effort and will miss unusual formats.
+- "Allow for 7 days" replaces the old "always allow"; after 7 days the owner is asked again.
 - Sign-in is a per-device account. Google/Microsoft sign-in is not built yet.
-- 6-digit invite codes can be guessed by an automated client. Add Firebase App Check or a rate-limited Cloud Function before a public launch.
-- Presence is a 30-second heartbeat; "online" means seen in the last 90 seconds. Device clocks should be within a minute of real time.
+- 6-digit invite codes: each device account may try one code every two seconds, and claiming a code is only possible while joining. Someone with many accounts can still guess faster; add Firebase App Check before a public launch.
+- Presence is a 30-second heartbeat; "online" means seen in the last 90 seconds. Event times are server times, and the app estimates the server clock at sign-in, so a wrong laptop clock no longer hides messages.
 - Plain-text questions are independent; the agent does not remember earlier ones.
 - Firebase can read team data (questions, answers, tasks, messages). Do not put secrets in them.

@@ -63,3 +63,24 @@ describe('activeMention', () => {
     expect(activeMention('mail a@b')).toBeNull();
   });
 });
+
+describe('review fixes: parsing', () => {
+  it('does not treat an email address in a question as a mention', () => {
+    expect(parseInput('/read what sends mail to ops@example.com')).toEqual({
+      kind: 'read', question: 'what sends mail to ops@example.com', target: undefined,
+    });
+    expect(parseInput('/read @bob who owns ops@example.com')).toMatchObject({ target: 'bob', question: 'who owns ops@example.com' });
+  });
+  it('says what is missing when /task has names but no text', () => {
+    expect(parseInput('/task @bob')).toMatchObject({ kind: 'error', message: expect.stringContaining('what needs doing') });
+  });
+  it('limits how many people one /task can assign', () => {
+    const many = Array.from({ length: 9 }, (_, i) => `@p${i}`).join(' ');
+    expect(parseInput(`/task ${many} do it`)).toMatchObject({ kind: 'error' });
+  });
+  it('parses team management commands', () => {
+    expect(parseInput('/team remove @Bob')).toEqual({ kind: 'team', sub: 'remove', target: 'Bob' });
+    expect(parseInput('/team leave')).toEqual({ kind: 'team', sub: 'leave', target: undefined });
+    expect(parseInput('/team')).toEqual({ kind: 'team', sub: undefined, target: undefined });
+  });
+});

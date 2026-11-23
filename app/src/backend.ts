@@ -34,12 +34,23 @@ export interface Backend {
   readonly uid: string;
   /** Called when a live subscription fails (for example permission lost or offline). */
   onError?: (e: BackendError) => void;
+  /**
+   * Best estimate of the service's clock. Event times are server times, so "what is new" must be
+   * judged against this, never against the laptop's own clock.
+   */
+  serverNow(): number;
 
   createTeam(teamName: string, displayName: string): Promise<Team>;
   /** Manager only. Six digits, valid ten minutes, one successful claim. */
   createInvite(teamId: string): Promise<Invite>;
   joinTeam(code: string, displayName: string): Promise<Team>;
   getTeam(teamId: string): Promise<Team | null>;
+  /** Manager only. Removes someone (not the team owner) and frees their name. */
+  removeMember(teamId: string, uid: string): Promise<void>;
+  /** Leave the team yourself. The owner cannot leave. */
+  leaveTeam(teamId: string): Promise<void>;
+  /** Manager only. Makes a member a manager. */
+  promoteMember(teamId: string, uid: string): Promise<void>;
 
   heartbeat(teamId: string, info: PresenceInfo): Promise<void>;
   subscribeMembers(teamId: string, cb: (members: Member[]) => void): Unsubscribe;

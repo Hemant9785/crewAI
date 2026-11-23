@@ -70,6 +70,10 @@ class MemoryBackend implements Backend {
     public readonly uid: string,
   ) {}
 
+  serverNow(): number {
+    return this.s.now();
+  }
+
   private member(teamId: string, uid = this.uid): Member | undefined {
     return this.s.members.get(teamId)?.get(uid);
   }
@@ -136,6 +140,38 @@ class MemoryBackend implements Backend {
     return t ? { id: t.id, name: t.name, ownerUid: t.ownerUid, createdAt: t.createdAt } : null;
   }
 
+  private drop(teamId: string, uid: string): void {
+    const team = this.s.teams.get(teamId)!;
+    if (uid === team.ownerUid) {
+      throw new BackendError('permission-denied', uid === this.uid ? 'The team owner cannot leave the team.' : 'The team owner cannot be removed.');
+    }
+    if (!this.member(teamId, uid)) throw new BackendError('not-found', 'That person is not in this team.');
+    this.s.members.get(teamId)!.delete(uid);
+    this.s.changed();
+  }
+
+  async removeMember(teamId: string, uid: string): Promise<void> {
+    const me = this.requireMember(teamId);
+    if (uid === this.uid) throw new BackendError('invalid', 'Use /team leave to leave the team yourself.');
+    if (me.role !== 'manager') throw new BackendError('permission-denied', 'Only a manager can remove people, and the team owner cannot be removed.');
+    this.drop(teamId, uid);
+  }
+
+  async leaveTeam(teamId: string): Promise<void> {
+    this.requireMember(teamId);
+    this.drop(teamId, this.uid);
+  }
+
+  async promoteMember(teamId: string, uid: string): Promise<void> {
+    const me = this.requireMember(teamId);
+    if (me.role !== 'manager') throw new BackendError('permission-denied', 'Only a manager can make someone a manager.');
+    const m = this.member(teamId, uid);
+    if (!m) throw new BackendError('not-found', 'That person is not in this team.');
+    if (m.role === 'manager') throw new BackendError('permission-denied', 'Only a manager can make someone a manager.');
+    m.role = 'manager';
+    this.s.changed();
+  }
+
   async heartbeat(teamId: string, info: PresenceInfo): Promise<void> {
     const me = this.requireMember(teamId);
     me.lastSeen = this.s.now();
@@ -183,20 +219,20 @@ class MemoryBackend implements Backend {
     items: { assigneeUid: string; assigneeName: string; text: string }[],
   ): Promise<Task[]> {
     const me = this.requireMember(teamId);
-    const out: Task[] = [];
-    for (const it of items) {
+    if (items.length > LIMITS.assignees) throw new BackendError('invalid', `Assign at most ${LIMITS.assignees} people at once.`);
+    // Validate everything first so the write is all-or-nothing, like the Firestore transaction.
+    const clean = items.map((it) => {
       if (!this.member(teamId, it.assigneeUid)) throw new BackendError('invalid', `${it.assigneeName} is not in this team.`);
-      const team = this.s.teams.get(teamId)!;
-      team.taskSeq += 1;
-      const now = this.s.now();
-      out.push({
-        id: randomUUID(), num: team.taskSeq,
-        assigneeUid: it.assigneeUid, assigneeName: it.assigneeName,
-        assignerUid: this.uid, assignerName: me.name,
-        text: bounded(it.text, LIMITS.text, 'Task'),
-        status: 'todo', note: '', createdAt: now, updatedAt: now,
-      });
-    }
+      return { ...it, text: bounded(it.text, LIMITS.text, 'Task') };
+    });
+    const team = this.s.teams.get(teamId)!;
+    const now = this.s.now();
+    const out: Task[] = clean.map((it) => ({
+      id: randomUUID(), num: ++team.taskSeq,
+      assigneeUid: it.assigneeUid, assigneeName: it.assigneeName,
+      assignerUid: this.uid, assignerName: me.name,
+      text: it.text, status: 'todo', note: '', createdAt: now, updatedAt: now,
+    }));
     const list = this.s.tasks.get(teamId) ?? [];
     list.push(...out);
     this.s.tasks.set(teamId, list);

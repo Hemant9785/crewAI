@@ -1,7 +1,7 @@
-import { Box, Text, useApp } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import { useEffect, useRef, useState } from 'react';
 import type { AgentRunner } from '../agents.js';
-import type { Backend } from '../backend.js';
+import { BackendError, type Backend } from '../backend.js';
 import type { LocalStore, Session, SessionSummary } from '../config.js';
 import { Engine } from '../engine.js';
 import type { AgentName, Team } from '../types.js';
@@ -20,7 +20,9 @@ export interface AppProps {
   engineOptions?: { tickMs?: number; heartbeatMs?: number };
 }
 
-type Phase = 'loading' | 'onboarding' | 'resume' | 'chat';
+type Phase = 'loading' | 'offline' | 'onboarding' | 'resume' | 'chat';
+
+const RETRY_MS = 5000;
 
 export function App({ backend, store, runner, folder, holder, engineOptions }: AppProps) {
   const { exit } = useApp();
@@ -30,6 +32,7 @@ export function App({ backend, store, runner, folder, holder, engineOptions }: A
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [agents, setAgents] = useState<AgentName[]>([]);
   const started = useRef(false);
+  const [offlineMsg, setOfflineMsg] = useState('');
 
   async function begin(team: Team) {
     const e = new Engine({ backend, store, runner, folder, ...engineOptions });
@@ -44,8 +47,9 @@ export function App({ backend, store, runner, folder, holder, engineOptions }: A
 
   function startNew(e: Engine | null = engine) {
     if (!e) return;
-    const s = store.newSession(folder);
-    e.attach(s, Date.now());
+    // Start from the service's clock: event times are server times.
+    const s = store.newSession(folder, e.time());
+    e.attach(s, e.time());
     setSession(s);
     setPhase('chat');
   }
@@ -61,22 +65,54 @@ export function App({ backend, store, runner, folder, holder, engineOptions }: A
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    void (async () => {
-      setAgents(await runner.detect());
+    let timer: NodeJS.Timeout | undefined;
+    let cancelled = false;
+    const open = async (): Promise<void> => {
       const saved = store.settings();
       if (saved.teamId) {
         try {
           const team = await backend.getTeam(saved.teamId);
           if (team) return await begin(team);
-        } catch {
-          /* no longer a member, or offline: fall through to onboarding */
+        } catch (e) {
+          // Offline or the service is down: keep the saved team and try again, never re-onboard.
+          if (!(e instanceof BackendError) || e.code === 'unavailable') {
+            if (cancelled) return;
+            setOfflineMsg(e instanceof BackendError ? e.message : "Can't reach the team service.");
+            setPhase('offline');
+            timer = setTimeout(() => void open(), RETRY_MS);
+            return;
+          }
+          /* no longer a member (removed or left): fall through to onboarding */
         }
       }
       setPhase('onboarding');
+    };
+    void (async () => {
+      setAgents(await runner.detect());
+      await open();
     })();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, []);
 
+  useInput(
+    (input, key) => {
+      if (input === 'q' || key.escape) exit();
+    },
+    { isActive: phase === 'offline' },
+  );
+
   if (phase === 'loading') return <Text color="yellow">◌ Connecting…</Text>;
+  if (phase === 'offline') {
+    return (
+      <Box flexDirection="column">
+        <Text color="yellow">◌ {offlineMsg} Retrying every few seconds…</Text>
+        <Text dimColor>Your team ({store.settings().teamName || 'saved team'}) is kept. Press q to quit.</Text>
+      </Box>
+    );
+  }
   if (phase === 'onboarding') {
     return (
       <Onboarding
