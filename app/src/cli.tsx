@@ -99,8 +99,22 @@ async function main(): Promise<number> {
   }
 
   const holder: { engine?: Engine } = {};
-  const app = render(<App backend={backend} store={store} runner={runner} folder={process.cwd()} holder={holder} />);
-  await app.waitUntilExit();
+  // Full-screen layout: use the terminal's alternate screen so the panels do not scroll into the
+  // user's shell history, and always restore it, even on a crash or Ctrl+C.
+  const fullScreen = Boolean(process.stdout.isTTY);
+  const ESC = String.fromCharCode(27);
+  const leave = () => {
+    if (fullScreen) process.stdout.write(`${ESC}[?1049l${ESC}[?25h`);
+  };
+  if (fullScreen) process.stdout.write(`${ESC}[?1049h${ESC}[2J${ESC}[H`);
+  process.once('exit', leave);
+  let app;
+  try {
+    app = render(<App backend={backend} store={store} runner={runner} folder={process.cwd()} holder={holder} />);
+    await app.waitUntilExit();
+  } finally {
+    leave();
+  }
   await holder.engine?.stop();
   await stopDemo?.();
   await backend.close();

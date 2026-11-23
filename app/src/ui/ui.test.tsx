@@ -34,7 +34,11 @@ async function mount(cloud: MemoryStore, uid: string, opts: { agents?: AgentName
   const ui = render(<App backend={backend} store={store} runner={runner} folder={tmp()} holder={holder} engineOptions={{ tickMs: 0, heartbeatMs: 0 }} />);
   cleanups.push(() => ui.unmount(), () => holder.engine?.stop());
   const out = () => ui.frames.join('\n');
-  const waitFor = (text: string) => vi.waitFor(() => expect(out()).toContain(text), { timeout: 4000 });
+  // After a screen appears, give React a moment to attach its keyboard handlers (a person cannot type that fast).
+  const waitFor = async (text: string) => {
+    await vi.waitFor(() => expect(out()).toContain(text), { timeout: 4000 });
+    await tick(60);
+  };
   const type = async (s: string) => {
     ui.stdin.write(s);
     await tick();

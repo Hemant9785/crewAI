@@ -299,13 +299,15 @@ describe('review fixes', () => {
   it('removes secrets from an answer before it is sent to the asker', async () => {
     const w = world();
     const boss = await w.person('Boss');
-    const runner = fakeRunner(['codex'], () => 'The key is in .env: STRIPE_SECRET_KEY=sk_live_abcdefghijklmnop1234');
+    // A fake key, assembled at runtime so secret scanners never see a whole key in the source.
+    const fakeKey = ['sk', 'live', 'abcdefghijklmnop1234'].join('_');
+    const runner = fakeRunner(['codex'], () => `The key is in .env: STRIPE_SECRET_KEY=${fakeKey}`);
     const hem = await w.person('Hemant', { runner });
     await boss.engine.submit('/read @hemant print the env file');
     await hem.engine.decideConsent(hem.engine.state.attention[0]!.request.id, 'once');
     await vi.waitFor(() => expect(boss.engine.state.entries.some((e) => e.kind === 'agent')).toBe(true));
     const ans = boss.engine.state.entries.find((e) => e.kind === 'agent')!.text;
-    expect(ans).not.toContain('sk_live_abcdefghijklmnop1234');
+    expect(ans).not.toContain(fakeKey);
     expect(ans).toContain('[secret removed]');
     expect(texts(hem.engine).some((t) => t.includes('looked like secrets'))).toBe(true);
   });

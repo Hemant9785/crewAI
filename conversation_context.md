@@ -51,6 +51,10 @@ Last updated: 2026-11-23. No secrets, keys or credentials are stored here.
 - A Firebase project with Email/Password sign-in enabled and a Firestore database, plus its web config values in `app/.env` (template provided).
 - Later: Google OAuth client ID for Google sign-in; enterprise SSO choice.
 
+## UI layout decision (2026-11-23)
+
+The owner chose split view "B": Team and Tasks panels on the left, Conversation on the right, full-screen. Rules agreed: one line per task in lists; peek of the selected task; Enter opens the full task; tasks grouped Needs help / In progress / To do with finished tasks collapsed; default view Mine; more markers for long lists; below 110 columns a one-line strip and Tab opens the task view; below 80 one column. See app/README.md "The screen".
+
 ## Status (2026-11-23)
 
 - Milestones 1-7 done; see tasks.md notes. Side panels from the handwritten sketch were replaced by the /tasks board and one feed (smallest change for a scrollback chat UI). Name rule: no spaces, so @mentions are unambiguous.

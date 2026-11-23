@@ -12,6 +12,9 @@ export interface ComposerProps {
   onSubmit: (text: string) => void;
   onEmptyChange?: (empty: boolean) => void;
   placeholder?: string;
+  /** False while another part of the screen has keyboard focus. The draft stays. */
+  active?: boolean;
+  hint?: string;
   /** Put text back in the box (a message that was not sent). Ignored if the user already started typing. */
   restore?: { text: string; n: number };
 }
@@ -19,7 +22,7 @@ export interface ComposerProps {
 const STRICT_NO_ARGS = ['tasks', 'new', 'help', 'quit'];
 const OPTIONAL_ARGS = ['team', 'agent'];
 
-export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange, placeholder, restore }: ComposerProps) {
+export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange, placeholder, restore, active = true, hint }: ComposerProps) {
   const [value, setValue] = useState('');
   const [cursor, setCursor] = useState(0);
   const [sel, setSel] = useState(0);
@@ -117,7 +120,7 @@ export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange
       setSel(0);
       setHist(-1);
     }
-  });
+  }, { isActive: active });
 
   function insertMention(m: Member) {
     const start = mention!.start;
@@ -148,7 +151,7 @@ export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange
             <Text dimColor>{isOnline(m, now) ? `  ${m.agent ?? 'no agent'}` : '  offline'}</Text>
           </Text>
         ))}
-      <Box borderStyle="round" borderColor="cyan" paddingX={1}>
+      <Box borderStyle="round" borderColor={active ? 'cyan' : 'gray'} paddingX={1}>
         <Text color="cyan">› </Text>
         {value === '' && placeholder ? (
           <Text>
@@ -163,7 +166,7 @@ export function Composer({ members, meUid, history, now, onSubmit, onEmptyChange
           </Text>
         )}
       </Box>
-      <Text dimColor>  / commands   @ teammates   enter send   ctrl+c quit</Text>
+      <Text dimColor wrap="truncate-end">  {hint ?? '/ commands   @ teammates   enter send   ctrl+c quit'}</Text>
     </Box>
   );
 }

@@ -38,6 +38,11 @@ Ordered by dependency. Decisions and assumptions: [conversation_context.md](conv
 **One-line installers (2026-11-23)**
 - `tools/install-crewai.ps1` and `tools/install-crewai.sh` find the newest `crewai-v*` release, verify the SHA-256 checksum, and install without admin rights. Tested against a local fake release server: Windows (good download installed and ran; tampered download refused) and the shell script with a stub binary (same, plus no duplicate PATH lines, unsupported-OS error). Not tested against a real GitHub release or on real macOS/Linux. They only work after this is pushed to `main` and a `crewai-v*` release exists.
 
+**Split-view layout (B), 2026-11-23**
+- Rebuilt the main screen from a printed log into a fixed full-screen layout: Team, Tasks (grouped, filtered Mine/All/Open, finished tasks collapsed, "more" markers, peek of the selected task) and a scrollable Conversation with a time column, colored speakers and day markers; a full task view with the wrapped description, people, timeline and actions; a one-line strip below 110 columns and one column below 80. New files: `ui/Panels.tsx`, `ui/TaskView.tsx`, `ui/feed.ts`, `ui/tasklist.ts`, `ui/textlayout.ts`, `ui/useTerminal.ts`, `testing/uiWorld.tsx`.
+- Verification: typecheck clean, 108 tests (unit tests for wrapping, task grouping/windowing and feed lines; screen tests at 140/100/70 columns with 20 and 30 tasks, focus, the task view, approvals, scrolling). Also run on a real Windows terminal (120 columns): panels aligned, live broadcast and task arrived while open.
+- Not verified: macOS/Linux terminals, very small heights (under about 15 rows), resizing a live window by hand, terminals without alternate-screen support. Mouse wheel is not handled.
+
 **Known limitations**
 - Not tested: real Codex/Claude answers through the full flow, macOS and Linux, long pasted text.
 - Not built: Google/Microsoft sign-in, admin controls, audit log, the team permission graph.

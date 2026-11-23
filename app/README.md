@@ -46,6 +46,18 @@ Then run `crewai` in any project folder. (Publishing to npm is not set up; the p
 | `/agent codex|claude|auto` | choose your agent (auto-detected otherwise) |
 | `/new` | start a new chat (past chats are listed on the next launch) |
 
+## The screen
+
+crewai uses the whole terminal (it switches to the alternate screen and restores your shell when you leave).
+
+| Terminal width | Layout |
+|---|---|
+| 110 columns or more | split view: Team and Tasks on the left, Conversation on the right, Needs you under Tasks |
+| 80 to 109 | one column with a one-line task strip under the header; Tab opens the task view |
+| under 80 | one column with a summary line; `/tasks` opens the task view |
+
+Keys: `PgUp` / `PgDn` scroll the conversation (a "newer" marker shows while you are scrolled up, and your place holds when messages arrive). `Tab` (with an empty message box) moves between the message box and the Tasks panel. In the Tasks panel: `↑↓` select, `Enter` open the full task, `s` start, `d` done, `h` need help, `x` cancel, `m` switch Mine / All / Open, `v` show or hide finished tasks. Tasks are grouped Needs help, In progress, To do; long titles are cut to one line, the first lines of the selected task show under the list, and the task view shows the whole description. Mouse wheel scrolling is not supported.
+
 ## Connect your own Firebase project
 
 1. Create a Firebase project. Enable Authentication > Email/Password and create a Firestore database.
