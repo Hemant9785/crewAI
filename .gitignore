@@ -3,6 +3,9 @@
 .tools/
 .worktrees/
 
+# The product website lives in its own repository
+website/
+
 # Local runtime state and credentials
 *.connection.json
 *.active.json

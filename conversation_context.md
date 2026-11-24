@@ -55,6 +55,10 @@ Last updated: 2026-11-23. No secrets, keys or credentials are stored here.
 
 The owner chose split view "B": Team and Tasks panels on the left, Conversation on the right, full-screen. Rules agreed: one line per task in lists; peek of the selected task; Enter opens the full task; tasks grouped Needs help / In progress / To do with finished tasks collapsed; default view Mine; more markers for long lists; below 110 columns a one-line strip and Tab opens the task view; below 80 one column. See app/README.md "The screen".
 
+## Website and marketing materials
+
+All website and marketing decisions, use cases, brand constraints, asset plans, and implementation belong in `website/`. See [website/marketing-brief.md](website/marketing-brief.md). Keep this file focused on the terminal app's product and engineering decisions.
+
 ## Status (2026-11-23)
 
 - Milestones 1-7 done; see tasks.md notes. Side panels from the handwritten sketch were replaced by the /tasks board and one feed (smallest change for a scrollback chat UI). Name rule: no spaces, so @mentions are unambiguous.
